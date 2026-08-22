@@ -5,6 +5,7 @@ import type { SpeechSegment } from './types';
 const MAX_SPEECH_CHARACTERS = 2_000;
 const MAX_SPEECH_WORDS = 250;
 const SENTENCE_CLOSERS = new Set(['"', "'", '”', '’', '»', '）', ')', ']', '}']);
+const TERMINAL_PUNCTUATION = new Set(['.', '!', '?', '…', '。', '！', '？']);
 const HONORIFICS = new Set([
   'mr', 'mrs', 'ms', 'dr', 'prof',
   'hr', 'herr', 'fr', 'frau',
@@ -83,6 +84,7 @@ const isProtectedPeriod = (text: string, index: number): boolean => {
 const hasQuotedReportingClause = (text: string, terminalIndex: number): boolean => {
   let index = terminalIndex + 1;
   let hasClosingQuote = false;
+  while (index < text.length && TERMINAL_PUNCTUATION.has(text[index])) index += 1;
   while (index < text.length && SENTENCE_CLOSERS.has(text[index])) {
     hasClosingQuote = true;
     index += 1;
@@ -96,7 +98,7 @@ const fallbackSentenceSegments = (text: string): string[] => {
 
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
-    const isTerminal = character === '.' || character === '!' || character === '?' || character === '。' || character === '！' || character === '？';
+    const isTerminal = TERMINAL_PUNCTUATION.has(character);
 
     if (
       !isTerminal
@@ -105,7 +107,7 @@ const fallbackSentenceSegments = (text: string): string[] => {
     ) continue;
 
     let end = index + 1;
-    while (end < text.length && (text[end] === '.' || text[end] === '!' || text[end] === '?' || SENTENCE_CLOSERS.has(text[end]))) {
+    while (end < text.length && (TERMINAL_PUNCTUATION.has(text[end]) || SENTENCE_CLOSERS.has(text[end]))) {
       end += 1;
     }
 

@@ -70,6 +70,22 @@ describe('speech text segments', () => {
     expect(segments.map(({ displayText }) => displayText).join('')).toBe(text);
   });
 
+  it.each([
+    ['“Was?!”, sagte Ana. Weiter.', '“Was?!”, sagte Ana.'],
+    ['“Nein!!”, sagte Ana. Weiter.', '“Nein!!”, sagte Ana.'],
+    ['“Warte...”, sagte Ana. Weiter.', '“Warte...”, sagte Ana.'],
+    ['“Warte…”, sagte Ana. Weiter.', '“Warte…”, sagte Ana.'],
+  ])('keeps quoted terminal punctuation runs with their reporting clause in the fallback', (text, firstSentence) => {
+    Object.defineProperty(Intl, 'Segmenter', {
+      configurable: true,
+      value: undefined,
+      writable: true,
+    });
+
+    expect(createSpeechSegments(text, Language.German, 'punctuation-fallback').map(({ displayText }) => displayText))
+      .toEqual([firstSentence, ' Weiter.']);
+  });
+
   it('treats a year-ending period as a sentence boundary in the fallback', () => {
     Object.defineProperty(Intl, 'Segmenter', {
       configurable: true,
