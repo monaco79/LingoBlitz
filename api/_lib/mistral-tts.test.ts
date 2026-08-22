@@ -1,5 +1,5 @@
 import * as assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 
 import { generateSpeech, listPresetVoices, TTSError } from './mistral-tts.ts';
 import type { TTSConfig } from './tts-config.ts';
@@ -90,6 +90,51 @@ test('maps aborted fetches to timeout errors', async () => {
       return true;
     },
   );
+});
+
+test('keeps the timeout active while an otherwise successful JSON body stalls', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+
+  let signal: AbortSignal | undefined;
+  let rejectBody: ((reason?: unknown) => void) | undefined;
+  let bodyParsingStarted: (() => void) | undefined;
+  const bodyParsing = new Promise<void>((resolve) => {
+    bodyParsingStarted = resolve;
+  });
+  const stalledResponse = {
+    ok: true,
+    status: 200,
+    json: () => new Promise((_, reject) => {
+      rejectBody = reject;
+      signal?.addEventListener('abort', () => reject(new DOMException('timed out', 'AbortError')), { once: true });
+      bodyParsingStarted?.();
+    }),
+  } as Response;
+
+  try {
+    const voices = listPresetVoices(config, (async (_input, init) => {
+      signal = init?.signal as AbortSignal;
+      return stalledResponse;
+    }) as typeof fetch);
+
+    await bodyParsing;
+    mock.timers.tick(20_000);
+    const aborted = signal?.aborted;
+
+    if (!aborted) {
+      rejectBody?.(new Error('test cleanup'));
+    }
+
+    await assert.rejects(voices, (error: unknown) => {
+      assert.ok(error instanceof TTSError);
+      assert.equal(error.category, 'timeout');
+      assert.equal(error.status, 504);
+      return true;
+    });
+    assert.equal(aborted, true);
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test('rejects invalid JSON and Base64 audio with safe invalid-response errors', async () => {

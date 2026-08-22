@@ -81,31 +81,37 @@ async function requestJson(
   const headers = new Headers(init.headers);
   headers.set('authorization', `Bearer ${apiKey}`);
 
-  let response: Response;
   try {
-    response = await (fetchImpl ?? fetch)(`${config.baseURL}${path}`, {
-      ...init,
-      headers,
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (isAbortError(error) || controller.signal.aborted) {
-      throw new TTSError('timeout', 504);
+    let response: Response;
+    try {
+      response = await (fetchImpl ?? fetch)(`${config.baseURL}${path}`, {
+        ...init,
+        headers,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) {
+        throw new TTSError('timeout', 504);
+      }
+
+      throw new TTSError('upstream', 502);
     }
 
-    throw new TTSError('upstream', 502);
+    if (!response.ok) {
+      throw errorForStatus(response.status);
+    }
+
+    try {
+      return await response.json();
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) {
+        throw new TTSError('timeout', 504);
+      }
+
+      throw new TTSError('invalid_response', 502);
+    }
   } finally {
     clearTimeout(timeout);
-  }
-
-  if (!response.ok) {
-    throw errorForStatus(response.status);
-  }
-
-  try {
-    return await response.json();
-  } catch {
-    throw new TTSError('invalid_response', 502);
   }
 }
 
