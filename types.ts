@@ -37,8 +37,18 @@ export enum Topic {
   Economics = 'Economics',
 }
 
+export type TTSProvider = 'voxtral' | 'browser';
+
+export interface LanguageTTSPreference {
+  provider: TTSProvider;
+  voxtralVoiceId: string;
+  browserVoiceName: string;
+}
+
 export interface TTSSettings {
-  voice: string;
+  /** @deprecated Kept temporarily while existing browser TTS call sites migrate. */
+  voice?: string;
+  preferences?: Partial<Record<Language, LanguageTTSPreference>>;
   speed: number;
   autoRead: boolean;
 }
