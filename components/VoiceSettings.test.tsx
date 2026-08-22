@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,7 +13,7 @@ import VoiceSettings from './VoiceSettings';
 const service = vi.hoisted(() => ({
   getVoicesForLanguage: vi.fn(),
   speakText: vi.fn((_request: SpeakTextRequest) => Promise.resolve()),
-  subscribeToVoiceChanges: vi.fn(() => () => undefined),
+  subscribeToVoiceChanges: vi.fn((_listener: () => void) => () => undefined),
 }));
 
 vi.mock('../services/ttsService', () => service);
@@ -103,6 +103,37 @@ describe('VoiceSettings', () => {
     expect(service.getVoicesForLanguage).toHaveBeenCalledWith(Language.Japanese, 'browser');
   });
 
+  it.each([
+    [Language.Japanese, 'Kyoko'],
+    [Language.Chinese, 'Ting-Ting'],
+  ])('persists Browser normalization for raw Voxtral settings in %s', async (language, browserVoiceName) => {
+    const onValue = vi.fn();
+    const initialValue: TTSSettings = {
+      speed: 0.8,
+      autoRead: false,
+      preferences: {
+        [language]: {
+          provider: 'voxtral',
+          voxtralVoiceId: 'unsupported-preset',
+          browserVoiceName,
+        },
+      },
+    };
+    service.getVoicesForLanguage.mockRejectedValue(new Error('voice discovery unavailable'));
+
+    render(<Harness language={language} initialValue={initialValue} onValue={onValue} />);
+
+    expect((screen.getByRole('radio', { name: 'Browser' }) as HTMLInputElement).checked).toBe(true);
+    await waitFor(() => {
+      const persisted = onValue.mock.calls.at(-1)?.[0] as TTSSettings | undefined;
+      expect(persisted?.preferences?.[language]).toEqual({
+        provider: 'browser',
+        voxtralVoiceId: 'unsupported-preset',
+        browserVoiceName,
+      });
+    });
+  });
+
   it('restores the saved voice for each source when switching providers', async () => {
     const user = userEvent.setup();
     const initialValue: TTSSettings = {
@@ -132,6 +163,43 @@ describe('VoiceSettings', () => {
     expect((await screen.findByRole('combobox', { name: 'Voice' }) as HTMLSelectElement).value).toBe('voxtral-two');
     await user.click(screen.getByRole('radio', { name: 'Browser' }));
     expect((await screen.findByRole('combobox', { name: 'Voice' }) as HTMLSelectElement).value).toBe('Paulina');
+  });
+
+  it('preserves a saved Browser voice through empty discovery and restores it after voiceschanged', async () => {
+    let announceVoiceChange: (() => void) | undefined;
+    let discoveredVoices: TTSVoiceOption[] = [];
+    const onValue = vi.fn();
+    const initialValue: TTSSettings = {
+      speed: 0.8,
+      autoRead: false,
+      preferences: {
+        [Language.Spanish]: {
+          provider: 'browser',
+          voxtralVoiceId: 'spanish-preset',
+          browserVoiceName: 'Monica',
+        },
+      },
+    };
+    service.getVoicesForLanguage.mockImplementation(() => Promise.resolve(discoveredVoices));
+    service.subscribeToVoiceChanges.mockImplementation((listener) => {
+      announceVoiceChange = listener;
+      return () => undefined;
+    });
+
+    render(<Harness initialValue={initialValue} onValue={onValue} />);
+
+    expect(await screen.findByText('No voices found for this language.')).not.toBeNull();
+    expect(onValue).not.toHaveBeenCalled();
+
+    discoveredVoices = [
+      browserVoice('Paulina', 'es-MX'),
+      browserVoice('Monica', 'es-ES'),
+    ];
+    act(() => announceVoiceChange?.());
+
+    expect((await screen.findByRole('combobox', { name: 'Voice' }) as HTMLSelectElement).value)
+      .toBe('Monica');
+    expect(onValue).not.toHaveBeenCalled();
   });
 
   it('keeps Browser available after the Voxtral voice list fails', async () => {

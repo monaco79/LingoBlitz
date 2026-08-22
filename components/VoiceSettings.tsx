@@ -42,6 +42,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
   onChangeRef.current = onChange;
 
   const preference = getTTSPreference(value, language);
+  const rawProvider = value.preferences?.[language]?.provider;
   const voxtralSupported = isVoxtralSupported(language);
   const activeProvider: TTSProvider = voxtralSupported ? preference.provider : 'browser';
   const selectedVoice = activeProvider === 'voxtral'
@@ -69,10 +70,10 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
   };
 
   useEffect(() => {
-    if (!voxtralSupported && preference.provider !== 'browser') {
+    if (!voxtralSupported && rawProvider !== 'browser') {
       updatePreference({ provider: 'browser' });
     }
-  }, [language, preference.provider, voxtralSupported]);
+  }, [language, rawProvider, voxtralSupported]);
 
   useEffect(() => {
     if (activeProvider !== 'browser') return;
@@ -106,7 +107,9 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
         ? currentPreference.voxtralVoiceId
         : currentPreference.browserVoiceName;
       const selectedExists = compatibleVoices.some((voice) => voice.id === currentVoice);
-      const nextVoice = selectedExists ? currentVoice : compatibleVoices[0]?.id ?? '';
+      const nextVoice = selectedExists
+        ? currentVoice
+        : compatibleVoices[0]?.id ?? (activeProvider === 'browser' ? currentVoice : '');
 
       if (nextVoice !== currentVoice) {
         updatePreference(activeProvider === 'voxtral'
