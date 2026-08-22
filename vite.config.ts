@@ -11,6 +11,11 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     restoreMocks: true,
     clearMocks: true,
+    include: [
+      'services/**/*.test.{ts,tsx}',
+      'components/**/*.test.{ts,tsx}',
+      '*.test.tsx',
+    ],
   },
   resolve: {
     alias: {
