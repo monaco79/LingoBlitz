@@ -4,7 +4,10 @@ import type { SpeechSegment } from './types';
 
 const MAX_SPEECH_CHARACTERS = 2_000;
 const MAX_SPEECH_WORDS = 250;
-const SENTENCE_CLOSERS = new Set(['"', "'", '”', '’', '»', '）', ')', ']', '}']);
+const MARKDOWN_SENTENCE_MASK = '\u2060';
+const SENTENCE_CLOSERS = new Set([
+  '"', "'", '”', '’', '»', '）', ')', ']', '}', MARKDOWN_SENTENCE_MASK,
+]);
 const TERMINAL_PUNCTUATION = new Set(['.', '!', '?', '…', '。', '！', '？']);
 const HONORIFICS = new Set([
   'mr', 'mrs', 'ms', 'dr', 'prof',
@@ -121,18 +124,29 @@ const fallbackSentenceSegments = (text: string): string[] => {
 };
 
 const visibleSentenceSegments = (text: string, language: Language): string[] => {
+  const segmentationText = text.replace(/\*/g, MARKDOWN_SENTENCE_MASK);
   const Segmenter = (Intl as typeof Intl & { Segmenter?: SentenceSegmenterConstructor }).Segmenter;
+  let maskedSegments: string[];
 
-  if (!Segmenter) return fallbackSentenceSegments(text);
-
-  try {
-    const segmenter = new Segmenter(LANGUAGE_TO_LOCALE[language] ?? 'en-US', { granularity: 'sentence' });
-    return attachWhitespaceSegments(mergeHonorificFragments(
-      Array.from(segmenter.segment(text), ({ segment }) => segment),
-    ));
-  } catch {
-    return fallbackSentenceSegments(text);
+  if (!Segmenter) {
+    maskedSegments = fallbackSentenceSegments(segmentationText);
+  } else {
+    try {
+      const segmenter = new Segmenter(LANGUAGE_TO_LOCALE[language] ?? 'en-US', { granularity: 'sentence' });
+      maskedSegments = attachWhitespaceSegments(mergeHonorificFragments(
+        Array.from(segmenter.segment(segmentationText), ({ segment }) => segment),
+      ));
+    } catch {
+      maskedSegments = fallbackSentenceSegments(segmentationText);
+    }
   }
+
+  let offset = 0;
+  return maskedSegments.map((segment) => {
+    const displaySegment = text.slice(offset, offset + segment.length);
+    offset += segment.length;
+    return displaySegment;
+  });
 };
 
 const splitOversizedText = (spokenText: string): string[] => {

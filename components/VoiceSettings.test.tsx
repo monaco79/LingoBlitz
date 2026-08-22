@@ -237,6 +237,7 @@ describe('VoiceSettings', () => {
     expect(service.speakText).toHaveBeenCalledWith({
       text: TTS_SAMPLE_SENTENCES[Language.Spanish],
       idPrefix: 'voice-preview',
+      ownerId: 'voice-preview',
       language: Language.Spanish,
       settings: expect.objectContaining({ speed: 0.8 }),
       onFallback,

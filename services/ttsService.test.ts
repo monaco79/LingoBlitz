@@ -28,7 +28,7 @@ const segment: SpeechSegment = {
 };
 
 const makeController = () => {
-  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null };
+  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null, ownerId: null };
   const listeners = new Set<(next: PlaybackSnapshot) => void>();
   return {
     getSnapshot: vi.fn(() => snapshot),
@@ -62,6 +62,7 @@ describe('provider-neutral TTS facade', () => {
     await service.speakText({
       text: 'Hallo.',
       idPrefix: 'preview',
+      ownerId: 'voice-preview',
       language: Language.German,
       settings,
       onFallback,
@@ -70,6 +71,7 @@ describe('provider-neutral TTS facade', () => {
     expect(createSegments).toHaveBeenCalledExactlyOnceWith('Hallo.', Language.German, 'preview');
     expect(controller.play).toHaveBeenCalledExactlyOnceWith({
       segments: [segment],
+      ownerId: 'voice-preview',
       language: Language.German,
       settings,
       onFallback,
@@ -85,6 +87,7 @@ describe('provider-neutral TTS facade', () => {
       voxtralVoices: vi.fn(async () => []),
     });
     const request: PlaybackRequest = {
+      ownerId: 'preview',
       segments: [segment],
       language: Language.German,
       settings,
@@ -93,7 +96,12 @@ describe('provider-neutral TTS facade', () => {
 
     await service.speakSegments(request);
     const unsubscribe = service.subscribeToPlayback(listener);
-    controller.setSnapshot({ status: 'playing', activeSegmentId: 'preview-0', source: 'voxtral' });
+    controller.setSnapshot({
+      status: 'playing',
+      activeSegmentId: 'preview-0',
+      source: 'voxtral',
+      ownerId: 'preview',
+    });
     service.pauseSpeech();
     service.resumeSpeech();
     service.stopSpeech();
@@ -103,17 +111,19 @@ describe('provider-neutral TTS facade', () => {
       status: 'playing',
       activeSegmentId: 'preview-0',
       source: 'voxtral',
+      ownerId: 'preview',
     });
     expect(service.getPlaybackSnapshot()).toEqual({
       status: 'playing',
       activeSegmentId: 'preview-0',
       source: 'voxtral',
+      ownerId: 'preview',
     });
     expect(controller.pause).toHaveBeenCalledTimes(1);
     expect(controller.resume).toHaveBeenCalledTimes(1);
     expect(controller.stop).toHaveBeenCalledTimes(1);
     unsubscribe();
-    controller.setSnapshot({ status: 'idle', activeSegmentId: null, source: null });
+    controller.setSnapshot({ status: 'idle', activeSegmentId: null, source: null, ownerId: null });
     expect(listener).toHaveBeenCalledTimes(1);
   });
 

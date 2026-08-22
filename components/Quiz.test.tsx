@@ -8,7 +8,7 @@ import Quiz from './Quiz';
 
 const tts = vi.hoisted(() => {
   let listener: ((snapshot: PlaybackSnapshot) => void) | null = null;
-  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null };
+  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null, ownerId: null };
   return {
     emit(next: PlaybackSnapshot) {
       snapshot = next;
@@ -18,7 +18,7 @@ const tts = vi.hoisted(() => {
     pauseSpeech: vi.fn(),
     reset() {
       listener = null;
-      snapshot = { status: 'idle', activeSegmentId: null, source: null };
+      snapshot = { status: 'idle', activeSegmentId: null, source: null, ownerId: null };
     },
     resumeSpeech: vi.fn(),
     speakSegments: vi.fn<(request: PlaybackRequest) => Promise<void>>(async () => undefined),
@@ -95,20 +95,25 @@ describe('Quiz sentence playback', () => {
     const request = tts.speakSegments.mock.calls[0][0];
     expect(request.segments.map((segment) => segment.displayText.trim()).join(' ')).toBe(text);
     expect(request.segments.every((segment) => segment.id.startsWith(prefix))).toBe(true);
-    expect(request).toMatchObject({ language: Language.German, settings: { ...settings, autoRead: true }, onFallback });
+    expect(request).toMatchObject({
+      ownerId: 'quiz',
+      language: Language.German,
+      settings: { ...settings, autoRead: true },
+      onFallback,
+    });
   });
 
   it('highlights the active sentence and delegates pause, resume, and stop', () => {
     renderQuiz();
 
-    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-1', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-1', source: 'voxtral', ownerId: 'quiz' }));
     const activeSentence = screen.getByText('Erkläre').closest('[data-visible-sentence-id]');
     expect(activeSentence?.getAttribute('data-active-sentence')).toBe('true');
     expect(screen.getAllByTestId('visible-sentence').filter((node) => node.dataset.activeSentence === 'true')).toHaveLength(1);
 
     fireEvent.click(screen.getByTitle('Pause'));
     expect(tts.pauseSpeech).toHaveBeenCalledTimes(1);
-    act(() => tts.emit({ status: 'paused', activeSegmentId: 'quiz-question-1', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'paused', activeSegmentId: 'quiz-question-1', source: 'voxtral', ownerId: 'quiz' }));
     fireEvent.click(screen.getByTitle('Resume'));
     expect(tts.resumeSpeech).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTitle('Stop'));
@@ -152,7 +157,7 @@ describe('Quiz sentence playback', () => {
   it.each(['Pause', 'Stop'])('cancels pending question auto-read after %s', (action) => {
     vi.useFakeTimers();
     renderQuiz({ ttsSettings: { ...settings, autoRead: true } });
-    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-0', source: 'voxtral', ownerId: 'quiz' }));
 
     fireEvent.click(screen.getByTitle(action));
     act(() => vi.advanceTimersByTime(800));
@@ -174,7 +179,7 @@ describe('Quiz sentence playback', () => {
   it('does not show controls for Article playback mounted at the same time', () => {
     renderQuiz();
 
-    act(() => tts.emit({ status: 'playing', activeSegmentId: 'article-body-0-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'article-body-0-0', source: 'voxtral', ownerId: 'article' }));
 
     expect(screen.queryByTitle('Pause')).toBeNull();
     expect(screen.getByTitle('Play')).not.toBeNull();
@@ -189,6 +194,28 @@ describe('Quiz sentence playback', () => {
     const request = tts.speakSegments.mock.calls[0][0];
     expect(request.segments[0].displayText).toContain('**sehr gut**');
     expect(request.segments[0].spokenText).toBe('Das ist sehr gut.');
+  });
+
+  it.each([
+    { feedback: '**Richtig!** Das passt.', tagName: 'strong' },
+    { feedback: '*Richtig!* Das passt.', tagName: 'em' },
+  ])('keeps punctuation inside Markdown emphasis for $tagName display and clean speech', ({
+    feedback,
+    tagName,
+  }) => {
+    renderQuiz({ feedback });
+
+    const visibleSentences = screen.getAllByTestId('visible-sentence');
+    expect(visibleSentences.map(({ textContent }) => textContent)).toEqual(['Richtig!', ' Das passt.']);
+    expect(visibleSentences[0].querySelector(tagName)?.textContent).toBe('Richtig!');
+    expect(visibleSentences.map(({ textContent }) => textContent).join('')).not.toContain('*');
+
+    fireEvent.click(screen.getByTitle('Play'));
+    const request = tts.speakSegments.mock.calls[0][0];
+    expect(request.segments).toMatchObject([
+      { displayText: expect.stringContaining('Richtig!'), spokenText: 'Richtig!' },
+      { displayText: ' Das passt.', spokenText: 'Das passt.' },
+    ]);
   });
 
   it('stops playback when speech content changes and when unmounted', () => {

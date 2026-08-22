@@ -290,6 +290,7 @@ const App: React.FC = () => {
       void ttsService.speakText({
         text: word,
         idPrefix: speechIdPrefix,
+        ownerId: speechIdPrefix,
         language: userSettings.learningLanguage,
         settings: userSettings.tts,
         onFallback: handleTTSFallback,
@@ -572,8 +573,10 @@ const App: React.FC = () => {
             <div className="flex items-center justify-center gap-2 mb-2">
               <p
                 data-visible-sentence-id={`${translationPopup.speechIdPrefix}-0`}
-                data-active-sentence={playback.activeSegmentId === `${translationPopup.speechIdPrefix}-0` ? 'true' : undefined}
-                aria-current={playback.activeSegmentId === `${translationPopup.speechIdPrefix}-0` ? 'true' : undefined}
+                data-active-sentence={playback.ownerId === translationPopup.speechIdPrefix
+                  && playback.activeSegmentId === `${translationPopup.speechIdPrefix}-0` ? 'true' : undefined}
+                aria-current={playback.ownerId === translationPopup.speechIdPrefix
+                  && playback.activeSegmentId === `${translationPopup.speechIdPrefix}-0` ? 'true' : undefined}
                 className="font-semibold text-gradient-lingoblitz text-base uppercase tracking-wide"
               >
                 {translationPopup.word}

@@ -6,6 +6,8 @@ import * as ttsService from '../services/ttsService';
 import { Language, Level, type TTSSettings } from '../types';
 import SpeakableText from './SpeakableText';
 
+const ARTICLE_PLAYBACK_OWNER = 'article';
+
 interface ArticleProps {
   title: string;
   content: string;
@@ -73,8 +75,9 @@ const Article: React.FC<ArticleProps> = ({
   }, [cancelPendingAutoRead, content, language, title]);
 
   const playSegments = useCallback(() => {
-    if (playbackSegments.length === 0) return;
+    if (!isActiveSurface || playbackSegments.length === 0) return;
     void ttsService.speakSegments({
+      ownerId: ARTICLE_PLAYBACK_OWNER,
       segments: playbackSegments,
       language,
       settings: ttsSettings,
@@ -82,7 +85,7 @@ const Article: React.FC<ArticleProps> = ({
     }).catch((error: unknown) => {
       console.error('TTS playback failed', error);
     });
-  }, [language, onFallback, playbackSegments, ttsSettings]);
+  }, [isActiveSurface, language, onFallback, playbackSegments, ttsSettings]);
 
   const play = useCallback(() => {
     cancelPendingAutoRead();
@@ -140,11 +143,7 @@ const Article: React.FC<ArticleProps> = ({
     ttsService.stopSpeech();
   }, [cancelPendingAutoRead]);
 
-  const ownedVisibleIds = useMemo(
-    () => new Set(playbackSegments.map(({ visibleSentenceId }) => visibleSentenceId)),
-    [playbackSegments],
-  );
-  const ownsPlayback = playback.activeSegmentId !== null && ownedVisibleIds.has(playback.activeSegmentId);
+  const ownsPlayback = playback.ownerId === ARTICLE_PLAYBACK_OWNER;
   const isActive = isActiveSurface && ownsPlayback && playback.status !== 'idle';
   const isPaused = isActive && playback.status === 'paused';
 
@@ -194,6 +193,7 @@ const Article: React.FC<ArticleProps> = ({
             <button
               type="button"
               onClick={play}
+              disabled={!isActiveSurface || playbackSegments.length === 0}
               className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
               title="Play"
             >
@@ -209,7 +209,7 @@ const Article: React.FC<ArticleProps> = ({
         <SpeakableText
           segments={titleSegments}
           language={language}
-          activeSegmentId={playback.activeSegmentId}
+          activeSegmentId={ownsPlayback ? playback.activeSegmentId : null}
           onWordClick={handleWordClick}
         />
       </h2>
@@ -220,7 +220,7 @@ const Article: React.FC<ArticleProps> = ({
             <SpeakableText
               segments={segments}
               language={language}
-              activeSegmentId={playback.activeSegmentId}
+              activeSegmentId={ownsPlayback ? playback.activeSegmentId : null}
               onWordClick={handleWordClick}
             />
           </p>

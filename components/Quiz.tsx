@@ -6,6 +6,8 @@ import type { PlaybackSnapshot } from '../services/tts/playbackController';
 import { createSpeechSegments } from '../services/tts/textSegments';
 import SpeakableText from './SpeakableText';
 
+const QUIZ_PLAYBACK_OWNER = 'quiz';
+
 interface QuizProps {
   question: string;
   onAnswerSubmit: (answer: string) => void;
@@ -74,9 +76,11 @@ const Quiz: React.FC<QuizProps> = ({
   }, [cancelPendingAutoRead, feedback, language, question]);
 
   const playSegments = useCallback(() => {
+    if (!isActiveSurface) return;
     const playableSegments = currentSegments.filter(({ spokenText }) => spokenText.length > 0);
     if (playableSegments.length === 0) return;
     void ttsService.speakSegments({
+      ownerId: QUIZ_PLAYBACK_OWNER,
       segments: playableSegments,
       language,
       settings: ttsSettings,
@@ -84,7 +88,7 @@ const Quiz: React.FC<QuizProps> = ({
     }).catch((error: unknown) => {
       console.error('TTS playback failed', error);
     });
-  }, [currentSegments, language, onFallback, ttsSettings]);
+  }, [currentSegments, isActiveSurface, language, onFallback, ttsSettings]);
 
   const handlePlay = useCallback(() => {
     cancelPendingAutoRead();
@@ -147,11 +151,7 @@ const Quiz: React.FC<QuizProps> = ({
     next();
   }, [cancelPendingAutoRead]);
 
-  const ownedVisibleIds = useMemo(
-    () => new Set(currentSegments.map(({ visibleSentenceId }) => visibleSentenceId)),
-    [currentSegments],
-  );
-  const ownsPlayback = playback.activeSegmentId !== null && ownedVisibleIds.has(playback.activeSegmentId);
+  const ownsPlayback = playback.ownerId === QUIZ_PLAYBACK_OWNER;
   const isPlaying = isActiveSurface && ownsPlayback && playback.status !== 'idle';
   const isPaused = isPlaying && playback.status === 'paused';
 
@@ -196,6 +196,7 @@ const Quiz: React.FC<QuizProps> = ({
         <button
           type="button"
           onClick={handlePlay}
+          disabled={!isActiveSurface || currentSegments.length === 0}
           className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
           title="Play"
         >
@@ -230,7 +231,7 @@ const Quiz: React.FC<QuizProps> = ({
               <SpeakableText
                 segments={questionSegments}
                 language={language}
-                activeSegmentId={playback.activeSegmentId}
+                activeSegmentId={ownsPlayback ? playback.activeSegmentId : null}
                 onWordClick={onWordClick ? handleWordClick : undefined}
                 renderEmphasis
               />
@@ -275,7 +276,7 @@ const Quiz: React.FC<QuizProps> = ({
               <SpeakableText
                 segments={feedbackSegments}
                 language={language}
-                activeSegmentId={playback.activeSegmentId}
+                activeSegmentId={ownsPlayback ? playback.activeSegmentId : null}
                 onWordClick={onWordClick ? handleWordClick : undefined}
                 renderEmphasis
               />

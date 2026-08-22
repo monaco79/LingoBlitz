@@ -137,12 +137,72 @@ const waitFor = async (assertion: () => void): Promise<void> => {
 };
 
 describe('PlaybackController queue and state', () => {
+  it('retains request ownership through loading, fallback, and inter-sentence preparation', async () => {
+    const { browser, controller, voxtral } = createHarness();
+    const snapshots: PlaybackSnapshot[] = [];
+    controller.subscribe((snapshot) => snapshots.push({ ...snapshot }));
+    const playback = controller.play({
+      ownerId: 'article',
+      segments: [makeSegment(0), makeSegment(1)],
+      language: Language.German,
+      settings: makeSettings(),
+    });
+
+    expect(controller.getSnapshot()).toEqual({
+      status: 'loading',
+      activeSegmentId: null,
+      source: 'voxtral',
+      ownerId: 'article',
+    });
+
+    voxtral.reject(0, new TTSAdapterError('upstream', 'Voxtral unavailable'));
+    await waitFor(() => expect(browser.calls).toHaveLength(2));
+    expect(controller.getSnapshot()).toEqual({
+      status: 'loading',
+      activeSegmentId: null,
+      source: 'browser',
+      ownerId: 'article',
+    });
+
+    const first = browser.resolve(0);
+    const second = browser.resolve(1);
+    await waitFor(() => expect(first.play).toHaveBeenCalledTimes(1));
+    expect(controller.getSnapshot().ownerId).toBe('article');
+
+    first.finish();
+    await waitFor(() => expect(second.play).toHaveBeenCalledTimes(1));
+    expect(controller.getSnapshot()).toEqual({
+      status: 'playing',
+      activeSegmentId: 'sentence-1',
+      source: 'browser',
+      ownerId: 'article',
+    });
+
+    second.finish();
+    await playback;
+    expect(snapshots.map(({ status, source, ownerId }) => [status, source, ownerId])).toEqual([
+      ['loading', 'voxtral', 'article'],
+      ['loading', 'browser', 'article'],
+      ['playing', 'browser', 'article'],
+      ['loading', 'browser', 'article'],
+      ['playing', 'browser', 'article'],
+      ['idle', null, null],
+    ]);
+    expect(controller.getSnapshot()).toEqual({
+      status: 'idle',
+      activeSegmentId: null,
+      source: null,
+      ownerId: null,
+    });
+  });
+
   it('moves from loading to playing exactly when the first audio unit begins', async () => {
     const { controller, voxtral } = createHarness();
     const snapshots: PlaybackSnapshot[] = [];
     controller.subscribe((snapshot) => snapshots.push({ ...snapshot }));
 
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -152,6 +212,7 @@ describe('PlaybackController queue and state', () => {
       status: 'loading',
       activeSegmentId: null,
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
 
     const unit = voxtral.resolve(0);
@@ -161,13 +222,14 @@ describe('PlaybackController queue and state', () => {
       status: 'playing',
       activeSegmentId: 'sentence-0',
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
     expect(snapshots.findIndex(({ status }) => status === 'loading'))
       .toBeLessThan(snapshots.findIndex(({ status }) => status === 'playing'));
 
     unit.finish();
     await playback;
-    expect(snapshots.at(-1)).toEqual({ status: 'idle', activeSegmentId: null, source: null });
+    expect(snapshots.at(-1)).toEqual({ status: 'idle', activeSegmentId: null, source: null, ownerId: null });
   });
 
   it('does not flicker the highlight between chunks of one visible sentence', async () => {
@@ -175,6 +237,7 @@ describe('PlaybackController queue and state', () => {
     const snapshots: PlaybackSnapshot[] = [];
     controller.subscribe((snapshot) => snapshots.push({ ...snapshot }));
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [
         makeSegment(0, 'sentence-shared', 'First chunk.'),
         makeSegment(1, 'sentence-shared', 'Second chunk.'),
@@ -204,6 +267,7 @@ describe('PlaybackController queue and state', () => {
   it('caps preparation at three and advances a three-unit look-ahead window', async () => {
     const { controller, voxtral } = createHarness();
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: Array.from({ length: 7 }, (_, index) => makeSegment(index)),
       language: Language.German,
       settings: makeSettings(),
@@ -234,6 +298,7 @@ describe('PlaybackController queue and state', () => {
   it('plays in queue order when later preparations resolve first', async () => {
     const { controller, voxtral } = createHarness();
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0), makeSegment(1), makeSegment(2)],
       language: Language.German,
       settings: makeSettings(),
@@ -259,6 +324,7 @@ describe('PlaybackController queue and state', () => {
   it('retains the active sentence while paused and resumes the same unit', async () => {
     const { controller, voxtral } = createHarness();
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -272,6 +338,7 @@ describe('PlaybackController queue and state', () => {
       status: 'paused',
       activeSegmentId: 'sentence-0',
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
 
     controller.resume();
@@ -280,6 +347,7 @@ describe('PlaybackController queue and state', () => {
       status: 'playing',
       activeSegmentId: 'sentence-0',
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
     unit.finish();
     await playback;
@@ -288,6 +356,7 @@ describe('PlaybackController queue and state', () => {
   it('retains pause intent while slow preparation finishes and waits for resume before playing', async () => {
     const { controller, voxtral } = createHarness();
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -298,6 +367,7 @@ describe('PlaybackController queue and state', () => {
       status: 'paused',
       activeSegmentId: null,
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
 
     const unit = voxtral.resolve(0);
@@ -308,6 +378,7 @@ describe('PlaybackController queue and state', () => {
       status: 'paused',
       activeSegmentId: null,
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
 
     controller.resume();
@@ -317,6 +388,7 @@ describe('PlaybackController queue and state', () => {
       status: 'playing',
       activeSegmentId: 'sentence-0',
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
     unit.finish();
     await playback;
@@ -325,6 +397,7 @@ describe('PlaybackController queue and state', () => {
   it('stays paused and can resume the next segment when the active unit settles', async () => {
     const { controller, voxtral } = createHarness();
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0), makeSegment(1)],
       language: Language.German,
       settings: makeSettings(),
@@ -342,6 +415,7 @@ describe('PlaybackController queue and state', () => {
       status: 'paused',
       activeSegmentId: null,
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
 
     controller.resume();
@@ -355,6 +429,7 @@ describe('PlaybackController queue and state', () => {
     const snapshots: PlaybackSnapshot[] = [];
     controller.subscribe((snapshot) => snapshots.push({ ...snapshot }));
     const firstPlayback = controller.play({
+      ownerId: 'first-owner',
       segments: [makeSegment(0, 'first-sentence')],
       language: Language.German,
       settings: makeSettings(),
@@ -362,12 +437,14 @@ describe('PlaybackController queue and state', () => {
     const firstSignal = voxtral.calls[0].signal;
 
     const secondPlayback = controller.play({
+      ownerId: 'second-owner',
       segments: [makeSegment(1, 'second-sentence')],
       language: Language.German,
       settings: makeSettings(),
     });
 
     expect(firstSignal.aborted).toBe(true);
+    expect(controller.getSnapshot().ownerId).toBe('second-owner');
     await expect(firstPlayback).resolves.toBeUndefined();
 
     const staleUnit = voxtral.resolve(0);
@@ -384,6 +461,7 @@ describe('PlaybackController queue and state', () => {
   it('stop clears highlighting and settles playback even if the unit is pending', async () => {
     const { controller, voxtral } = createHarness();
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -393,7 +471,7 @@ describe('PlaybackController queue and state', () => {
 
     controller.stop();
 
-    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null });
+    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null, ownerId: null });
     expect(unit.stop).toHaveBeenCalledTimes(1);
     expect(unit.dispose).toHaveBeenCalledTimes(1);
     await expect(playback).resolves.toBeUndefined();
@@ -402,6 +480,7 @@ describe('PlaybackController queue and state', () => {
   it('skips silent audio units and advances to the next speakable visible sentence', async () => {
     const { controller, voxtral } = createHarness();
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0, 'silent-sentence', ''), makeSegment(1, 'spoken-sentence')],
       language: Language.German,
       settings: makeSettings(),
@@ -428,6 +507,7 @@ describe('PlaybackController provider fallback', () => {
       }
     });
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -436,7 +516,7 @@ describe('PlaybackController provider fallback', () => {
     voxtral.reject(0, new TTSAdapterError('upstream', 'Voxtral unavailable'));
 
     await expect(playback).resolves.toBeUndefined();
-    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null });
+    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null, ownerId: null });
     expect(browser.calls).toHaveLength(0);
     expect(onFallback).not.toHaveBeenCalled();
     unsubscribe();
@@ -450,6 +530,7 @@ describe('PlaybackController provider fallback', () => {
       if (!replaced && snapshot.status === 'loading' && snapshot.source === 'browser') {
         replaced = true;
         replacementPlayback = controller.play({
+          ownerId: 'test-owner',
           segments: [makeSegment(9, 'listener-replacement')],
           language: Language.German,
           settings: makeSettings('voxtral'),
@@ -458,6 +539,7 @@ describe('PlaybackController provider fallback', () => {
     });
     const onFallback = vi.fn(() => controller.stop());
     const firstPlayback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -471,6 +553,7 @@ describe('PlaybackController provider fallback', () => {
       status: 'loading',
       activeSegmentId: null,
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
     const replacementUnit = voxtral.resolve(1);
     await waitFor(() => expect(replacementUnit.play).toHaveBeenCalledTimes(1));
@@ -485,6 +568,7 @@ describe('PlaybackController provider fallback', () => {
     const { controller, voxtral } = createHarness();
     const onFallback = vi.fn(() => controller.stop());
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -494,7 +578,7 @@ describe('PlaybackController provider fallback', () => {
 
     await expect(playback).resolves.toBeUndefined();
     expect(onFallback).toHaveBeenCalledTimes(1);
-    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null });
+    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null, ownerId: null });
   });
 
   it('does not let an old fallback overwrite replacement state started by onFallback', async () => {
@@ -502,12 +586,14 @@ describe('PlaybackController provider fallback', () => {
     let replacementPlayback: Promise<void> | null = null;
     const onFallback = vi.fn(() => {
       replacementPlayback = controller.play({
+        ownerId: 'test-owner',
         segments: [makeSegment(9, 'replacement-sentence')],
         language: Language.German,
         settings: makeSettings('voxtral'),
       });
     });
     const firstPlayback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -520,6 +606,7 @@ describe('PlaybackController provider fallback', () => {
       status: 'loading',
       activeSegmentId: null,
       source: 'voxtral',
+      ownerId: 'test-owner',
     });
     const replacementUnit = voxtral.resolve(1);
     await waitFor(() => expect(replacementUnit.play).toHaveBeenCalledTimes(1));
@@ -536,6 +623,7 @@ describe('PlaybackController provider fallback', () => {
       throw new Error('UI notification failed');
     });
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -557,6 +645,7 @@ describe('PlaybackController provider fallback', () => {
     const { browser, controller, voxtral } = createHarness();
     const onFallback = vi.fn();
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
@@ -583,6 +672,7 @@ describe('PlaybackController provider fallback', () => {
     const settings = makeSettings();
     const savedSettings = structuredClone(settings);
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0), makeSegment(1), makeSegment(2), makeSegment(3)],
       language: Language.German,
       settings,
@@ -625,6 +715,7 @@ describe('PlaybackController provider fallback', () => {
     const { browser, controller, voxtral } = createHarness();
     const onFallback = vi.fn();
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: Array.from({ length: 5 }, (_, index) => makeSegment(index)),
       language: Language.German,
       settings: makeSettings(),
@@ -668,6 +759,7 @@ describe('PlaybackController provider fallback', () => {
     const onFallback = vi.fn();
     const browserError = new TTSAdapterError('upstream', 'Browser speech playback failed');
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0), makeSegment(1)],
       language: Language.German,
       settings: makeSettings(),
@@ -683,7 +775,7 @@ describe('PlaybackController provider fallback', () => {
 
     await expect(playback).rejects.toBe(browserError);
     expect(onFallback).toHaveBeenCalledTimes(1);
-    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null });
+    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null, ownerId: null });
   });
 
   it('selects browser for an unsupported language without reporting fallback', async () => {
@@ -691,6 +783,7 @@ describe('PlaybackController provider fallback', () => {
     const onFallback = vi.fn();
     const settings = makeSettings('voxtral', Language.Japanese);
     const playback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.Japanese,
       settings,
@@ -718,12 +811,14 @@ describe('PlaybackController provider fallback', () => {
     const firstFallback = vi.fn();
     const secondFallback = vi.fn();
     const firstPlayback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(0)],
       language: Language.German,
       settings: makeSettings(),
       onFallback: firstFallback,
     });
     const secondPlayback = controller.play({
+      ownerId: 'test-owner',
       segments: [makeSegment(1)],
       language: Language.German,
       settings: makeSettings(),

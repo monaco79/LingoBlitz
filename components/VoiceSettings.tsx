@@ -151,6 +151,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
       await ttsService.speakText({
         text: TTS_SAMPLE_SENTENCES[language],
         idPrefix: 'voice-preview',
+        ownerId: 'voice-preview',
         language,
         settings: valueRef.current,
         onFallback,

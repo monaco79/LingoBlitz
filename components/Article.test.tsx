@@ -9,7 +9,7 @@ import Quiz from './Quiz';
 
 const tts = vi.hoisted(() => {
   const listeners = new Set<(snapshot: PlaybackSnapshot) => void>();
-  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null };
+  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null, ownerId: null };
 
   return {
     emit(next: PlaybackSnapshot) {
@@ -20,7 +20,7 @@ const tts = vi.hoisted(() => {
     pauseSpeech: vi.fn(),
     reset() {
       listeners.clear();
-      snapshot = { status: 'idle', activeSegmentId: null, source: null };
+      snapshot = { status: 'idle', activeSegmentId: null, source: null, ownerId: null };
     },
     resumeSpeech: vi.fn(),
     speakSegments: vi.fn<(request: PlaybackRequest) => Promise<void>>(async () => undefined),
@@ -101,6 +101,7 @@ describe('Article sentence playback', () => {
       'article-body-1-0-0',
     ]);
     expect(request).toMatchObject({
+      ownerId: 'article',
       language: Language.German,
       settings,
       onFallback,
@@ -115,6 +116,7 @@ describe('Article sentence playback', () => {
         status: 'playing',
         activeSegmentId: 'article-body-0-1',
         source: 'voxtral',
+        ownerId: 'article',
       });
     });
 
@@ -128,11 +130,11 @@ describe('Article sentence playback', () => {
   it('delegates pause, resume, and stop to the controller facade', () => {
     renderArticle();
 
-    act(() => tts.emit({ status: 'playing', activeSegmentId: 'article-title-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'article-title-0', source: 'voxtral', ownerId: 'article' }));
     fireEvent.click(screen.getByTitle('Pause'));
     expect(tts.pauseSpeech).toHaveBeenCalledTimes(1);
 
-    act(() => tts.emit({ status: 'paused', activeSegmentId: 'article-title-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'paused', activeSegmentId: 'article-title-0', source: 'voxtral', ownerId: 'article' }));
     fireEvent.click(screen.getByTitle('Resume'));
     expect(tts.resumeSpeech).toHaveBeenCalledTimes(1);
 
@@ -166,7 +168,7 @@ describe('Article sentence playback', () => {
   it.each(['Pause', 'Stop'])('cancels pending auto-read when the user chooses %s', (action) => {
     vi.useFakeTimers();
     renderArticle({ ttsSettings: { ...settings, autoRead: true } });
-    act(() => tts.emit({ status: 'playing', activeSegmentId: 'article-title-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'article-title-0', source: 'voxtral', ownerId: 'article' }));
 
     fireEvent.click(screen.getByTitle(action));
     act(() => vi.advanceTimersByTime(800));
@@ -197,7 +199,7 @@ describe('Article sentence playback', () => {
   it('does not show controls for another simultaneously mounted speech surface', () => {
     renderArticle();
 
-    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-0', source: 'voxtral', ownerId: 'quiz' }));
 
     expect(screen.queryByTitle('Pause')).toBeNull();
     expect(screen.getByTitle('Play')).not.toBeNull();
@@ -238,13 +240,32 @@ describe('Article sentence playback', () => {
     );
     const [articleRoot, quizRoot] = Array.from(container.children) as HTMLElement[];
 
-    act(() => tts.emit({ status: 'playing', activeSegmentId: 'article-title-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'loading', activeSegmentId: null, source: 'voxtral', ownerId: 'article' }));
+    expect(within(articleRoot).getByTitle('Pause')).not.toBeNull();
+    expect(within(quizRoot).getByTitle('Play')).not.toBeNull();
+    expect(container.querySelector('[data-active-sentence="true"]')).toBeNull();
+
+    act(() => tts.emit({ status: 'loading', activeSegmentId: null, source: 'browser', ownerId: 'article' }));
     expect(within(articleRoot).getByTitle('Pause')).not.toBeNull();
     expect(within(quizRoot).getByTitle('Play')).not.toBeNull();
 
-    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'article-title-0', source: 'browser', ownerId: 'article' }));
+    expect(within(articleRoot).getByTitle('Pause')).not.toBeNull();
+    expect(within(quizRoot).getByTitle('Play')).not.toBeNull();
+
+    act(() => tts.emit({ status: 'loading', activeSegmentId: null, source: 'voxtral', ownerId: 'quiz' }));
     expect(within(articleRoot).getByTitle('Play')).not.toBeNull();
     expect(within(quizRoot).getByTitle('Pause')).not.toBeNull();
+  });
+
+  it('disables playback while Article is mounted outside its active surface', () => {
+    renderArticle({ isActiveSurface: false });
+
+    const playButton = screen.getByTitle('Play') as HTMLButtonElement;
+    expect(playButton.disabled).toBe(true);
+    fireEvent.click(playButton);
+
+    expect(tts.speakSegments).not.toHaveBeenCalled();
   });
 
   it('stops playback before forwarding a clicked word', () => {

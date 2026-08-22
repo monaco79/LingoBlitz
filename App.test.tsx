@@ -19,7 +19,7 @@ const ai = vi.hoisted(() => ({
 
 const tts = vi.hoisted(() => {
   let listener: ((snapshot: PlaybackSnapshot) => void) | null = null;
-  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null };
+  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null, ownerId: null };
   return {
     emit(next: PlaybackSnapshot) {
       snapshot = next;
@@ -29,7 +29,7 @@ const tts = vi.hoisted(() => {
     getVoicesForLanguage: vi.fn(),
     reset() {
       listener = null;
-      snapshot = { status: 'idle', activeSegmentId: null, source: null };
+      snapshot = { status: 'idle', activeSegmentId: null, source: null, ownerId: null };
     },
     speakText: vi.fn<(request: SpeakTextRequest) => Promise<void>>(async () => undefined),
     stopSpeech: vi.fn(),
@@ -98,6 +98,7 @@ describe('App TTS integration', () => {
     expect(tts.speakText).toHaveBeenCalledExactlyOnceWith({
       text: 'reisen',
       idPrefix: expect.stringMatching(/^clicked-word-\d+$/),
+      ownerId: expect.stringMatching(/^clicked-word-\d+$/),
       language: Language.German,
       settings: {
         preferences: {
@@ -120,12 +121,18 @@ describe('App TTS integration', () => {
 
     fireEvent.click(screen.getByText('Reisen'));
     const request = tts.speakText.mock.calls[0][0];
+    expect(request.ownerId).toBe(request.idPrefix);
     const visibleSentenceId = `${request.idPrefix}-0`;
     const popupWord = screen.getByText('reisen');
     expect(popupWord.closest('[data-visible-sentence-id]')?.getAttribute('data-visible-sentence-id'))
       .toBe(visibleSentenceId);
 
-    act(() => tts.emit({ status: 'playing', activeSegmentId: visibleSentenceId, source: 'voxtral' }));
+    act(() => tts.emit({
+      status: 'playing',
+      activeSegmentId: visibleSentenceId,
+      source: 'voxtral',
+      ownerId: request.ownerId,
+    }));
 
     expect(popupWord.closest('[data-visible-sentence-id]')?.getAttribute('data-active-sentence')).toBe('true');
   });

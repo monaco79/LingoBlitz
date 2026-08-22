@@ -104,6 +104,33 @@ describe('speech text segments', () => {
     expect(normalizeSpeechText('**Hallo** 👋  Welt')).toBe('Hallo Welt');
   });
 
+  it.each([
+    ['bold', '**Richtig!** Das passt.', '**Richtig!**'],
+    ['italic', '*Richtig!* Das passt.', '*Richtig!*'],
+  ])('keeps punctuation and closing %s Markdown delimiters in the same visible sentence', (
+    _style,
+    text,
+    firstDisplayText,
+  ) => {
+    const segments = createSpeechSegments(text, Language.German, 'feedback');
+
+    expect(segments).toMatchObject([
+      {
+        id: 'feedback-0-0',
+        visibleSentenceId: 'feedback-0',
+        displayText: firstDisplayText,
+        spokenText: 'Richtig!',
+      },
+      {
+        id: 'feedback-1-0',
+        visibleSentenceId: 'feedback-1',
+        displayText: ' Das passt.',
+        spokenText: 'Das passt.',
+      },
+    ]);
+    expect(segments.map(({ displayText }) => displayText).join('')).toBe(text);
+  });
+
   it('preserves visible silent text with an empty spoken unit', () => {
     Object.defineProperty(Intl, 'Segmenter', {
       configurable: true,

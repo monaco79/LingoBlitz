@@ -27,6 +27,7 @@ interface PlaybackControllerFacade {
 export interface SpeakTextRequest {
   text: string;
   idPrefix: string;
+  ownerId: string;
   language: Language;
   settings: TTSSettings;
   onFallback?: () => void;
@@ -44,6 +45,7 @@ export const createTTSService = (options: TTSServiceOptions) => {
   const speakSegments = (request: PlaybackRequest): Promise<void> => options.controller.play(request);
   const speakText = (request: SpeakTextRequest): Promise<void> => speakSegments({
     segments: options.createSegments(request.text, request.language, request.idPrefix),
+    ownerId: request.ownerId,
     language: request.language,
     settings: request.settings,
     onFallback: request.onFallback,

@@ -8,7 +8,7 @@ import VocabularyPractice from './VocabularyPractice';
 
 const tts = vi.hoisted(() => {
   let listener: ((snapshot: PlaybackSnapshot) => void) | null = null;
-  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null };
+  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null, ownerId: null };
   return {
     emit(next: PlaybackSnapshot) {
       snapshot = next;
@@ -17,7 +17,7 @@ const tts = vi.hoisted(() => {
     getPlaybackSnapshot: vi.fn(() => snapshot),
     reset() {
       listener = null;
-      snapshot = { status: 'idle', activeSegmentId: null, source: null };
+      snapshot = { status: 'idle', activeSegmentId: null, source: null, ownerId: null };
     },
     speakSegments: vi.fn<(request: PlaybackRequest) => Promise<void>>(async () => undefined),
     stopSpeech: vi.fn(),
@@ -83,6 +83,7 @@ describe('VocabularyPractice sentence playback', () => {
     act(() => vi.advanceTimersByTime(300));
     expect(tts.speakSegments).toHaveBeenCalledTimes(1);
     expect(tts.speakSegments.mock.calls[0][0]).toMatchObject({
+      ownerId: expect.stringMatching(/^vocabulary-card-\d+$/),
       language: Language.German,
       settings,
       onFallback,
@@ -104,7 +105,12 @@ describe('VocabularyPractice sentence playback', () => {
     act(() => vi.advanceTimersByTime(300));
     const activeSegmentId = tts.speakSegments.mock.calls[0][0].segments[0].visibleSentenceId;
 
-    act(() => tts.emit({ status: 'playing', activeSegmentId, source: 'voxtral' }));
+    act(() => tts.emit({
+      status: 'playing',
+      activeSegmentId,
+      source: 'voxtral',
+      ownerId: tts.speakSegments.mock.calls[0][0].ownerId,
+    }));
 
     expect(screen.getByTestId('vocabulary-card-front').getAttribute('data-active-sentence')).toBe('true');
   });
@@ -115,7 +121,12 @@ describe('VocabularyPractice sentence playback', () => {
       renderPractice();
       act(() => vi.advanceTimersByTime(300));
       const firstVisibleId = tts.speakSegments.mock.calls[0][0].segments[0].visibleSentenceId;
-      act(() => tts.emit({ status: 'playing', activeSegmentId: firstVisibleId, source: 'voxtral' }));
+      act(() => tts.emit({
+        status: 'playing',
+        activeSegmentId: firstVisibleId,
+        source: 'voxtral',
+        ownerId: tts.speakSegments.mock.calls[0][0].ownerId,
+      }));
       tts.stopSpeech.mockClear();
 
       fireEvent.click(screen.getByRole('button', { name: action }));
@@ -123,8 +134,11 @@ describe('VocabularyPractice sentence playback', () => {
       expect(tts.stopSpeech).toHaveBeenCalledTimes(1);
       expect(screen.getByTestId('vocabulary-card-front').getAttribute('data-active-sentence')).toBeNull();
       act(() => vi.advanceTimersByTime(300));
-      const secondVisibleId = tts.speakSegments.mock.calls[1][0].segments[0].visibleSentenceId;
+      const secondRequest = tts.speakSegments.mock.calls[1][0];
+      const secondVisibleId = secondRequest.segments[0].visibleSentenceId;
       expect(secondVisibleId).not.toBe(firstVisibleId);
+      expect(secondRequest.ownerId).not.toBe(tts.speakSegments.mock.calls[0][0].ownerId);
+      expect(secondVisibleId.startsWith(`${secondRequest.ownerId}-`)).toBe(true);
     },
   );
 

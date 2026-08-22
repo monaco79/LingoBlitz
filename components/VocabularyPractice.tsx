@@ -66,6 +66,7 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
     if (!currentItem || !ttsSettings.autoRead || showConfetti) return undefined;
     const timer = window.setTimeout(() => {
       void ttsService.speakSegments({
+        ownerId: currentItem.speechIdPrefix,
         segments: wordSegments.filter(({ spokenText }) => spokenText.length > 0),
         language: learningLanguage,
         settings: ttsSettings,
@@ -119,7 +120,8 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
   const isLastWordInRound = wordsToPractice.length === 1;
   const progress = totalPracticedWords > 0 ? ((totalPracticedWords - wordsToPractice.length) / totalPracticedWords) * 100 : 0;
   const isCardActive = wordSegments.some(
-    ({ visibleSentenceId }) => visibleSentenceId === playback.activeSegmentId,
+    ({ visibleSentenceId }) => currentItem?.speechIdPrefix === playback.ownerId
+      && visibleSentenceId === playback.activeSegmentId,
   );
 
   return (

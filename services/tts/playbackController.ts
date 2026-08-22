@@ -15,9 +15,11 @@ export interface PlaybackSnapshot {
   status: 'idle' | 'loading' | 'playing' | 'paused';
   activeSegmentId: string | null;
   source: TTSProvider | null;
+  ownerId: string | null;
 }
 
 export interface PlaybackRequest {
+  ownerId: string;
   segments: SpeechSegment[];
   language: Language;
   settings: TTSSettings;
@@ -95,12 +97,14 @@ const idleSnapshot = (): PlaybackSnapshot => ({
   status: 'idle',
   activeSegmentId: null,
   source: null,
+  ownerId: null,
 });
 
 const sameSnapshot = (left: PlaybackSnapshot, right: PlaybackSnapshot): boolean =>
   left.status === right.status
   && left.activeSegmentId === right.activeSegmentId
-  && left.source === right.source;
+  && left.source === right.source
+  && left.ownerId === right.ownerId;
 
 const stopAndDispose = (unit: PlaybackUnit): void => {
   unit.stop();
@@ -145,7 +149,12 @@ export class PlaybackController {
       voxtralFailureIndex: null,
     };
     this.currentOperation = operation;
-    this.setSnapshot({ status: 'loading', activeSegmentId: null, source });
+    this.setSnapshot({
+      status: 'loading',
+      activeSegmentId: null,
+      source,
+      ownerId: request.ownerId,
+    });
     this.ensureLookahead(operation);
     void this.run(operation);
     return operation.deferred.promise;
@@ -284,6 +293,7 @@ export class PlaybackController {
           status: 'playing',
           activeSegmentId: segment.visibleSentenceId,
           source: operation.source,
+          ownerId: operation.request.ownerId,
         });
         try {
           await playback;
@@ -305,6 +315,7 @@ export class PlaybackController {
             status: operation.pauseRequested ? 'paused' : 'loading',
             activeSegmentId: null,
             source: operation.source,
+            ownerId: operation.request.ownerId,
           });
         }
       }
@@ -360,6 +371,7 @@ export class PlaybackController {
       status: operation.pauseRequested ? 'paused' : 'loading',
       activeSegmentId: null,
       source: 'browser',
+      ownerId: operation.request.ownerId,
     });
     if (!this.isCurrent(operation)) return true;
     this.ensureLookahead(operation);
