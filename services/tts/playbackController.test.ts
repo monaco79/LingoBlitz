@@ -285,6 +285,43 @@ describe('PlaybackController queue and state', () => {
     await playback;
   });
 
+  it('retains pause intent while slow preparation finishes and waits for resume before playing', async () => {
+    const { controller, voxtral } = createHarness();
+    const playback = controller.play({
+      segments: [makeSegment(0)],
+      language: Language.German,
+      settings: makeSettings(),
+    });
+
+    controller.pause();
+    expect(controller.getSnapshot()).toEqual({
+      status: 'paused',
+      activeSegmentId: null,
+      source: 'voxtral',
+    });
+
+    const unit = voxtral.resolve(0);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(unit.play).not.toHaveBeenCalled();
+    expect(controller.getSnapshot()).toEqual({
+      status: 'paused',
+      activeSegmentId: null,
+      source: 'voxtral',
+    });
+
+    controller.resume();
+    await waitFor(() => expect(unit.play).toHaveBeenCalledTimes(1));
+    expect(unit.resume).not.toHaveBeenCalled();
+    expect(controller.getSnapshot()).toEqual({
+      status: 'playing',
+      activeSegmentId: 'sentence-0',
+      source: 'voxtral',
+    });
+    unit.finish();
+    await playback;
+  });
+
   it('settles a replaced operation and ignores its late preparation', async () => {
     const { controller, voxtral } = createHarness({ voxtralRejectsOnAbort: false });
     const snapshots: PlaybackSnapshot[] = [];
@@ -354,6 +391,78 @@ describe('PlaybackController queue and state', () => {
 });
 
 describe('PlaybackController provider fallback', () => {
+  it('keeps stop state authoritative when onFallback stops playback', async () => {
+    const { controller, voxtral } = createHarness();
+    const onFallback = vi.fn(() => controller.stop());
+    const playback = controller.play({
+      segments: [makeSegment(0)],
+      language: Language.German,
+      settings: makeSettings(),
+      onFallback,
+    });
+    voxtral.reject(0, new TTSAdapterError('upstream', 'Voxtral unavailable'));
+
+    await expect(playback).resolves.toBeUndefined();
+    expect(onFallback).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null });
+  });
+
+  it('does not let an old fallback overwrite replacement state started by onFallback', async () => {
+    const { controller, voxtral } = createHarness();
+    let replacementPlayback: Promise<void> | null = null;
+    const onFallback = vi.fn(() => {
+      replacementPlayback = controller.play({
+        segments: [makeSegment(9, 'replacement-sentence')],
+        language: Language.German,
+        settings: makeSettings('voxtral'),
+      });
+    });
+    const firstPlayback = controller.play({
+      segments: [makeSegment(0)],
+      language: Language.German,
+      settings: makeSettings(),
+      onFallback,
+    });
+    voxtral.reject(0, new TTSAdapterError('upstream', 'Voxtral unavailable'));
+
+    await waitFor(() => expect(replacementPlayback).not.toBeNull());
+    expect(controller.getSnapshot()).toEqual({
+      status: 'loading',
+      activeSegmentId: null,
+      source: 'voxtral',
+    });
+    const replacementUnit = voxtral.resolve(1);
+    await waitFor(() => expect(replacementUnit.play).toHaveBeenCalledTimes(1));
+    replacementUnit.finish();
+
+    await expect(firstPlayback).resolves.toBeUndefined();
+    await expect(replacementPlayback!).resolves.toBeUndefined();
+    expect(onFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues browser fallback when onFallback throws', async () => {
+    const { browser, controller, voxtral } = createHarness();
+    const onFallback = vi.fn(() => {
+      throw new Error('UI notification failed');
+    });
+    const playback = controller.play({
+      segments: [makeSegment(0)],
+      language: Language.German,
+      settings: makeSettings(),
+      onFallback,
+    });
+    void playback.catch(() => undefined);
+    voxtral.reject(0, new TTSAdapterError('upstream', 'Voxtral unavailable'));
+
+    await waitFor(() => expect(browser.calls).toHaveLength(1));
+    const browserUnit = browser.resolve(0);
+    await waitFor(() => expect(browserUnit.play).toHaveBeenCalledTimes(1));
+    browserUnit.finish();
+
+    await expect(playback).resolves.toBeUndefined();
+    expect(onFallback).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back when Voxtral playback throws before returning a promise', async () => {
     const { browser, controller, voxtral } = createHarness();
     const onFallback = vi.fn();
@@ -402,6 +511,7 @@ describe('PlaybackController provider fallback', () => {
       'segment-2',
       'segment-3',
     ]));
+    expect(voxtral.calls).toHaveLength(3);
     expect(speculativeThird.stop).toHaveBeenCalledTimes(1);
     expect(speculativeThird.dispose).toHaveBeenCalledTimes(1);
 
@@ -419,6 +529,48 @@ describe('PlaybackController provider fallback', () => {
     expect(first.play).toHaveBeenCalledTimes(1);
     expect(onFallback).toHaveBeenCalledTimes(1);
     expect(settings).toEqual(savedSettings);
+  });
+
+  it('does not expand Voxtral look-ahead after a known speculative index-3 failure', async () => {
+    const { browser, controller, voxtral } = createHarness();
+    const onFallback = vi.fn();
+    const playback = controller.play({
+      segments: Array.from({ length: 5 }, (_, index) => makeSegment(index)),
+      language: Language.German,
+      settings: makeSettings(),
+      onFallback,
+    });
+    void playback.catch(() => undefined);
+    const first = voxtral.resolve(0);
+    const second = voxtral.resolve(1);
+    const third = voxtral.resolve(2);
+    await waitFor(() => expect(first.play).toHaveBeenCalledTimes(1));
+
+    first.finish();
+    await waitFor(() => expect(voxtral.calls).toHaveLength(4));
+    await waitFor(() => expect(second.play).toHaveBeenCalledTimes(1));
+    voxtral.reject(3, new TTSAdapterError('upstream', 'Speculative sentence failed'));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(voxtral.calls).toHaveLength(4);
+
+    second.finish();
+    await waitFor(() => expect(third.play).toHaveBeenCalledTimes(1));
+    expect(voxtral.calls).toHaveLength(4);
+    third.finish();
+
+    await waitFor(() => expect(browser.calls.map(({ segment }) => segment.id)).toEqual([
+      'segment-3',
+      'segment-4',
+    ]));
+    const fourth = browser.resolve(0);
+    const fifth = browser.resolve(1);
+    await waitFor(() => expect(fourth.play).toHaveBeenCalledTimes(1));
+    fourth.finish();
+    await waitFor(() => expect(fifth.play).toHaveBeenCalledTimes(1));
+    fifth.finish();
+
+    await expect(playback).resolves.toBeUndefined();
+    expect(onFallback).toHaveBeenCalledTimes(1);
   });
 
   it('fires onFallback only once when browser preparation also fails', async () => {

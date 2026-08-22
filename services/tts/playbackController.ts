@@ -53,15 +53,19 @@ interface PlaybackOperation {
   context: AdapterContext;
   currentIndex: number;
   currentUnit: PlaybackUnit | null;
+  currentUnitStarted: boolean;
   deferred: Deferred;
   fallbackNotified: boolean;
   preparations: Map<number, PreparationEntry>;
+  pauseRequested: boolean;
   request: PlaybackRequest;
+  resumeGate: Deferred | null;
   segments: SpeechSegment[];
   source: TTSProvider;
   stageAbort: AbortController;
   stageVersion: number;
   token: number;
+  voxtralFailureIndex: number | null;
 }
 
 const createDeferred = (): Deferred => {
@@ -126,15 +130,19 @@ export class PlaybackController {
       context: this.createContext(request, source),
       currentIndex: 0,
       currentUnit: null,
+      currentUnitStarted: false,
       deferred: createDeferred(),
       fallbackNotified: false,
       preparations: new Map(),
+      pauseRequested: false,
       request,
+      resumeGate: null,
       segments: request.segments.filter(({ spokenText }) => spokenText.trim().length > 0),
       source,
       stageAbort: new AbortController(),
       stageVersion: 0,
       token: ++this.nextToken,
+      voxtralFailureIndex: null,
     };
     this.currentOperation = operation;
     this.setSnapshot({ status: 'loading', activeSegmentId: null, source });
@@ -145,18 +153,31 @@ export class PlaybackController {
 
   pause(): void {
     const operation = this.currentOperation;
-    if (!operation?.currentUnit || this.snapshot.status !== 'playing') return;
+    if (!operation || this.snapshot.status === 'idle') return;
 
-    operation.currentUnit.pause();
+    operation.pauseRequested = true;
+    if (operation.currentUnitStarted) {
+      operation.currentUnit?.pause();
+    } else {
+      operation.resumeGate ??= createDeferred();
+    }
     this.setSnapshot({ ...this.snapshot, status: 'paused' });
   }
 
   resume(): void {
     const operation = this.currentOperation;
-    if (!operation?.currentUnit || this.snapshot.status !== 'paused') return;
+    if (!operation || !operation.pauseRequested || this.snapshot.status !== 'paused') return;
 
-    void operation.currentUnit.resume().catch(() => undefined);
-    this.setSnapshot({ ...this.snapshot, status: 'playing' });
+    operation.pauseRequested = false;
+    const resumeGate = operation.resumeGate;
+    operation.resumeGate = null;
+    resumeGate?.resolve();
+    if (operation.currentUnitStarted) {
+      void operation.currentUnit?.resume().catch(() => undefined);
+      this.setSnapshot({ ...this.snapshot, status: 'playing' });
+    } else {
+      this.setSnapshot({ ...this.snapshot, status: 'loading' });
+    }
   }
 
   stop(): void {
@@ -185,6 +206,7 @@ export class PlaybackController {
 
   private ensureLookahead(operation: PlaybackOperation): void {
     if (!this.isCurrent(operation)) return;
+    if (operation.source === 'voxtral' && operation.voxtralFailureIndex !== null) return;
     const end = Math.min(operation.segments.length, operation.currentIndex + PREPARE_LOOKAHEAD);
     for (let index = operation.currentIndex; index < end; index += 1) {
       if (!operation.preparations.has(index)) {
@@ -195,6 +217,7 @@ export class PlaybackController {
 
   private startPreparation(operation: PlaybackOperation, index: number): void {
     const stageVersion = operation.stageVersion;
+    const source = operation.source;
     const entry: PreparationEntry = {
       promise: Promise.resolve({ kind: 'cancelled' }),
       unit: null,
@@ -210,7 +233,18 @@ export class PlaybackController {
         entry.unit = unit;
         return { kind: 'unit', unit };
       })
-      .catch<PreparationResult>((error: unknown) => ({ kind: 'error', error }));
+      .catch<PreparationResult>((error: unknown) => {
+        if (
+          source === 'voxtral'
+          && !this.isCancellation(error)
+          && this.isCurrentStage(operation, stageVersion)
+        ) {
+          operation.voxtralFailureIndex = operation.voxtralFailureIndex === null
+            ? index
+            : Math.min(operation.voxtralFailureIndex, index);
+        }
+        return { kind: 'error', error };
+      });
   }
 
   private async run(operation: PlaybackOperation): Promise<void> {
@@ -232,6 +266,12 @@ export class PlaybackController {
         const segment = operation.segments[operation.currentIndex];
         entry.unit = null;
         operation.currentUnit = result.unit;
+        if (operation.pauseRequested) {
+          const resumeGate = operation.resumeGate ?? createDeferred();
+          operation.resumeGate = resumeGate;
+          await resumeGate.promise;
+          if (!this.isCurrent(operation)) break;
+        }
         let playback: Promise<void>;
         try {
           playback = result.unit.play();
@@ -239,6 +279,7 @@ export class PlaybackController {
           if (this.tryFallback(operation, error)) continue;
           throw error;
         }
+        operation.currentUnitStarted = true;
         this.setSnapshot({
           status: 'playing',
           activeSegmentId: segment.visibleSentenceId,
@@ -253,6 +294,7 @@ export class PlaybackController {
         if (!this.isCurrent(operation)) break;
 
         operation.currentUnit = null;
+        operation.currentUnitStarted = false;
         result.unit.dispose();
         operation.currentIndex += 1;
         this.ensureLookahead(operation);
@@ -286,6 +328,8 @@ export class PlaybackController {
 
     operation.cancelled = true;
     operation.stageAbort.abort();
+    operation.resumeGate?.resolve();
+    operation.resumeGate = null;
     this.disposeOperationResources(operation);
     this.currentOperation = null;
     operation.deferred.resolve();
@@ -306,14 +350,23 @@ export class PlaybackController {
     operation.source = 'browser';
     operation.context = this.createContext(operation.request, 'browser');
     operation.stageAbort = new AbortController();
+    operation.voxtralFailureIndex = null;
+
+    this.setSnapshot({
+      status: operation.pauseRequested ? 'paused' : 'loading',
+      activeSegmentId: null,
+      source: 'browser',
+    });
+    this.ensureLookahead(operation);
 
     if (!operation.fallbackNotified) {
       operation.fallbackNotified = true;
-      operation.request.onFallback?.();
+      try {
+        operation.request.onFallback?.();
+      } catch {
+        // Notification failure must not interrupt the provider transition.
+      }
     }
-
-    this.setSnapshot({ status: 'loading', activeSegmentId: null, source: 'browser' });
-    this.ensureLookahead(operation);
     return true;
   }
 
@@ -327,6 +380,7 @@ export class PlaybackController {
     if (operation.currentUnit) {
       stopAndDispose(operation.currentUnit);
       operation.currentUnit = null;
+      operation.currentUnitStarted = false;
     }
     for (const entry of operation.preparations.values()) {
       if (entry.unit) {
