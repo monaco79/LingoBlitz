@@ -10,9 +10,11 @@ import {
 } from './types';
 
 interface BrowserSpeechSynthesis {
+  addEventListener?(type: string, listener: EventListenerOrEventListenerObject): void;
   cancel(): void;
   getVoices(): SpeechSynthesisVoice[];
   pause(): void;
+  removeEventListener?(type: string, listener: EventListenerOrEventListenerObject): void;
   resume(): void;
   speak(utterance: SpeechSynthesisUtterance): void;
 }
@@ -60,6 +62,16 @@ export class BrowserSpeechAdapter implements SpeechAdapter {
         provider: 'browser',
         languages: [voice.lang.replace('_', '-')],
       }));
+  }
+
+  subscribeToVoiceChanges(listener: () => void): () => void {
+    if (!this.synthesis.addEventListener || !this.synthesis.removeEventListener) {
+      return () => undefined;
+    }
+
+    const handleVoiceChange: EventListener = () => listener();
+    this.synthesis.addEventListener('voiceschanged', handleVoiceChange);
+    return () => this.synthesis.removeEventListener?.('voiceschanged', handleVoiceChange);
   }
 
   async prepare(

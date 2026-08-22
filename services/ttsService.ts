@@ -193,6 +193,7 @@ export interface TTSServiceOptions {
   controller: PlaybackControllerFacade;
   createSegments(text: string, language: Language, idPrefix: string): SpeechSegment[];
   legacy: LegacyBrowserSpeech;
+  subscribeToBrowserVoices?(listener: () => void): () => void;
   voxtralVoices(language: Language, signal?: AbortSignal): Promise<TTSVoiceOption[]>;
 }
 
@@ -257,6 +258,9 @@ export const createTTSService = (options: TTSServiceOptions) => {
     subscribeToPlayback: (
       listener: (snapshot: PlaybackSnapshot) => void,
     ): (() => void) => options.controller.subscribe(listener),
+    subscribeToVoiceChanges: (
+      listener: () => void,
+    ): (() => void) => options.subscribeToBrowserVoices?.(listener) ?? (() => undefined),
   };
 };
 
@@ -275,6 +279,7 @@ const singleton = createTTSService({
   controller,
   createSegments: createSpeechSegments,
   legacy,
+  subscribeToBrowserVoices: (listener) => browserAdapter.subscribeToVoiceChanges(listener),
   voxtralVoices: fetchVoxtralVoices,
 });
 
@@ -290,3 +295,4 @@ export const speakSegments = singleton.speakSegments;
 export const speakText = singleton.speakText;
 export const stopSpeech = singleton.stopSpeech;
 export const subscribeToPlayback = singleton.subscribeToPlayback;
+export const subscribeToVoiceChanges = singleton.subscribeToVoiceChanges;

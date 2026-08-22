@@ -61,6 +61,40 @@ const createHarness = (voices: SpeechSynthesisVoice[] = [makeVoice('Microsoft Ka
 };
 
 describe('BrowserSpeechAdapter', () => {
+  it('owns a non-destructive voiceschanged subscription for multiple UI consumers', () => {
+    const eventHandlers = new Set<EventListenerOrEventListenerObject>();
+    const synthesis = {
+      cancel: vi.fn(),
+      getVoices: vi.fn(() => []),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      speak: vi.fn(),
+      addEventListener: vi.fn((_type: string, listener: EventListenerOrEventListenerObject) => {
+        eventHandlers.add(listener);
+      }),
+      removeEventListener: vi.fn((_type: string, listener: EventListenerOrEventListenerObject) => {
+        eventHandlers.delete(listener);
+      }),
+    };
+    const adapter = new BrowserSpeechAdapter({ speechSynthesis: synthesis });
+    const first = vi.fn();
+    const second = vi.fn();
+
+    const unsubscribeFirst = adapter.subscribeToVoiceChanges(first);
+    const unsubscribeSecond = adapter.subscribeToVoiceChanges(second);
+    eventHandlers.forEach((handler) => {
+      if (typeof handler === 'function') handler(new Event('voiceschanged'));
+      else handler.handleEvent(new Event('voiceschanged'));
+    });
+
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+    unsubscribeFirst();
+    unsubscribeSecond();
+    expect(synthesis.removeEventListener).toHaveBeenCalledTimes(2);
+    expect(eventHandlers).toHaveLength(0);
+  });
+
   it('uses the selected voice, language locale, and playback rate until sentence end', async () => {
     const { adapter, synthesis, utterances } = createHarness();
     const unit = await adapter.prepare(segment, context, new AbortController().signal);

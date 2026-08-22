@@ -173,6 +173,24 @@ describe('provider-neutral TTS facade', () => {
     expect(browserVoices).toHaveBeenNthCalledWith(2, Language.German);
     expect(voxtralVoices).toHaveBeenCalledExactlyOnceWith(Language.German, undefined);
   });
+
+  it('exposes browser voice changes without assigning a global handler from UI code', () => {
+    const subscribeToBrowserVoices = vi.fn(() => () => undefined);
+    const service = createTTSService({
+      browserVoices: vi.fn(async () => []),
+      controller: makeController(),
+      createSegments: vi.fn(() => []),
+      legacy: makeLegacy(),
+      subscribeToBrowserVoices,
+      voxtralVoices: vi.fn(async () => []),
+    });
+    const listener = vi.fn();
+
+    const unsubscribe = service.subscribeToVoiceChanges(listener);
+
+    expect(subscribeToBrowserVoices).toHaveBeenCalledExactlyOnceWith(listener);
+    expect(unsubscribe).toEqual(expect.any(Function));
+  });
 });
 
 describe('deprecated positional browser wrapper', () => {
