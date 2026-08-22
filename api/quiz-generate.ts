@@ -1,12 +1,8 @@
-import { OpenAI } from 'openai';
+import { getAIClient } from './_lib/ai';
 
 export const config = {
     runtime: 'edge',
 };
-
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
 
 export default async function handler(req: Request) {
     if (req.method !== 'POST') {
@@ -27,7 +23,7 @@ export default async function handler(req: Request) {
 
         const levelDescription = LEVEL_DESCRIPTIONS[level as keyof typeof LEVEL_DESCRIPTIONS] || LEVEL_DESCRIPTIONS['B1'];
 
-        // System prompt - CACHED (generic instruction)
+        // Keep the stable tutoring instruction separate from request-specific content.
         const systemPrompt = `You are a language teacher creating comprehension questions. Generate questions that test understanding of the article content.`;
 
         // User prompt - contains all variables
@@ -45,8 +41,9 @@ REQUIREMENTS:
 
 Return ONLY the question text, no additional formatting.`;
 
-        const response = await openai.chat.completions.create({
-            model: "gpt-4o",
+        const { client, model } = getAIClient();
+        const response = await client.chat.completions.create({
+            model,
             messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userPrompt }

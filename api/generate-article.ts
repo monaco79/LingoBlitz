@@ -1,14 +1,10 @@
 import { LEVEL_DESCRIPTIONS, LEVEL_WORD_COUNTS } from '../constants';
 import { Level } from '../types';
-import { OpenAI } from 'openai';
+import { getAIClient } from './_lib/ai';
 
 export const config = {
     runtime: 'edge',
 };
-
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
 
 export async function POST(req: Request) {
     try {
@@ -32,8 +28,9 @@ export async function POST(req: Request) {
 
 Write the article now.`;
 
-        const response = await openai.chat.completions.create({
-            model: "gpt-4o",
+        const { client, model } = getAIClient();
+        const response = await client.chat.completions.create({
+            model,
             messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userPrompt }

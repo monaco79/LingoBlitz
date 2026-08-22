@@ -15,7 +15,7 @@ Licensed under CC BY-NC 4.0.
 
 ## ✨ Features
 
-- ⚡ **Lightning-fast article generation** - Articles generated using OpenAI GPT-4o
+- ⚡ **Lightning-fast article generation** - Articles generated using Mistral Large 3 or OpenAI GPT-4o
 - 🔊 **Text-to-Speech (TTS)** - Natural voice playback with Microsoft, Google, or Apple voices
   - Auto-play articles after generation
   - Adjustable playback speed (0.6x - 1.4x)
@@ -73,8 +73,22 @@ For the best experience on mobile, you can add LingoBlitz to your home screen to
 - **Styling:** Tailwind CSS
 - **Fonts:** Poppins (UI), Aleo (Article content)
 - **Build Tool:** Vite
-- **AI/ML:** OpenAI API (GPT-4o with prompt caching)
+- **AI/ML:** Configurable Mistral or OpenAI Chat Completions API
 - **TTS:** Web Speech API (supports Microsoft, Google, and Apple voices)
+
+### AI provider configuration
+
+The AI provider and model are selected through environment variables, without code changes:
+
+| Variable | Mistral | OpenAI |
+| --- | --- | --- |
+| `AI_PROVIDER` | `mistral` | `openai` |
+| `AI_MODEL` | `mistral-large-2512` | `gpt-4o` |
+| API key | `MISTRAL_API_KEY` | `OPENAI_API_KEY` |
+
+`AI_MODEL` is optional. When it is empty, the application uses the selected provider's default model (`mistral-large-2512` or `gpt-4o`). OpenAI remains the default provider when `AI_PROVIDER` is not set.
+
+For a safe Vercel switch, first add `MISTRAL_API_KEY` to every affected project and the required Production/Preview environments. Then set `AI_PROVIDER=mistral`, leave `AI_MODEL` empty unless you want an explicit override, and redeploy. To return to OpenAI, set `AI_PROVIDER=openai`, ensure `OPENAI_API_KEY` is available, and clear `AI_MODEL` (or set it to an OpenAI model such as `gpt-4o`) before redeploying. Copy `.env.example` for local development.
 
 ---
 
@@ -93,8 +107,8 @@ LingoBlitz uses the browser's built-in Web Speech API for text-to-speech functio
 
 This app does not collect any personal data. It uses only the data you provide to it, such as your language preferences and interests. The app does not store any data on your device or on any server. It also does not use any third-party services to collect data.
 
-**OpenAI API Usage:**
-To generate articles, quizzes, and translations, this application sends your selected topics, language settings, and article content to the OpenAI API. This data is processed solely for the purpose of generating the content you requested. Please refer to [OpenAI's Enterprise Privacy Policy](https://openai.com/enterprise-privacy) for more details on how they handle API data.
+**AI API Usage:**
+To generate articles, quizzes, and translations, this application sends your selected topics, language settings, and article content to the configured AI provider (Mistral AI or OpenAI). This data is processed solely for the purpose of generating the content you requested. Please refer to the provider's privacy documentation for details on how API data is handled.
 
 ---
 
@@ -113,7 +127,7 @@ This project is licensed under the **Creative Commons Attribution-NonCommercial 
 ## 🙏 Acknowledgments
 
 - **AI Assistance:** This project (v2.0) was built with the help of **Google Gemini** (2.5 Pro & 3 Pro) and **Claude** (Sonnet 4.5).
-- **Powered by:** [OpenAI](https://openai.com/)
+- **AI providers:** [Mistral AI](https://mistral.ai/) and [OpenAI](https://openai.com/)
 - **Fonts:** [Google Fonts](https://fonts.google.com/)
 - **Icons:** Heroicons
 

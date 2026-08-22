@@ -1,12 +1,8 @@
-import { OpenAI } from 'openai';
+import { getAIClient } from './_lib/ai';
 
 export const config = {
     runtime: 'edge',
 };
-
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
 
 export default async function handler(req: Request) {
     if (req.method !== 'POST') {
@@ -28,8 +24,9 @@ export default async function handler(req: Request) {
 
         const userPrompt = `Generate ${count} topics now.`;
 
-        const response = await openai.chat.completions.create({
-            model: "gpt-4o",
+        const { client, model } = getAIClient();
+        const response = await client.chat.completions.create({
+            model,
             messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userPrompt }

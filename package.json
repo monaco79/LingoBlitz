@@ -10,6 +10,7 @@
     "dev": "vite",
     "dev:api": "vercel dev",
     "build": "vite build",
+    "test": "node --test api/_lib/*.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
