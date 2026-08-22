@@ -62,7 +62,11 @@ const request = async (
   }
 
   if (!response.ok) {
-    throw safeError(errorCategory(response.status, await readErrorCode(response)));
+    const code = await readErrorCode(response);
+    if (init.signal?.aborted) {
+      throw new TTSAdapterError('cancelled', 'Voxtral request was cancelled');
+    }
+    throw safeError(errorCategory(response.status, code));
   }
   return response;
 };

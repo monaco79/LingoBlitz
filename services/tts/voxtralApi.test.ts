@@ -89,6 +89,34 @@ describe('Voxtral API client', () => {
     expect(String(error)).not.toContain(code);
   });
 
+  it('maps cancellation while reading a non-2xx error body to cancelled', async () => {
+    const controller = new AbortController();
+    let markBodyStarted: (() => void) | undefined;
+    const bodyStarted = new Promise<void>((resolve) => { markBodyStarted = resolve; });
+    const response = new Response('{}', { status: 429 });
+    vi.spyOn(response, 'json').mockImplementation(async () => {
+      markBodyStarted?.();
+      await new Promise<void>((_resolve, reject) => {
+        controller.signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('private error body detail', 'AbortError')),
+          { once: true },
+        );
+      });
+      return {};
+    });
+    const api = createVoxtralApi(vi.fn(async () => response));
+
+    const audio = api.fetchVoxtralAudio(segment, Language.German, 'voice-1', controller.signal);
+    await bodyStarted;
+    controller.abort();
+
+    await expect(audio).rejects.toMatchObject({
+      category: 'cancelled',
+      message: 'Voxtral request was cancelled',
+    });
+  });
+
   it('maps an aborted fetch to cancellation', async () => {
     const abortError = new DOMException('private abort detail', 'AbortError');
     const api = createVoxtralApi(vi.fn(async () => { throw abortError; }));
