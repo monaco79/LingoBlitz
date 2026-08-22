@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,12 +6,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LEVEL_TTS_SPEEDS } from '../constants';
 import { getTTSPreference } from '../services/tts/settings';
 import type { TTSVoiceOption } from '../services/tts/types';
+import type { SpeakTextRequest } from '../services/ttsService';
 import { Language, Level, Topic, type UserSettings } from '../types';
 import SettingsModal from './SettingsModal';
 
 const service = vi.hoisted(() => ({
   getVoicesForLanguage: vi.fn(),
-  speakText: vi.fn(async () => undefined),
+  speakText: vi.fn<(request: SpeakTextRequest) => Promise<void>>(async () => undefined),
+  stopSpeech: vi.fn(),
   subscribeToVoiceChanges: vi.fn(() => () => undefined),
 }));
 
@@ -48,6 +50,18 @@ const currentSettings: UserSettings = {
   },
 };
 
+const SettingsModalHost: React.FC<{ onFallback: () => void }> = ({ onFallback }) => {
+  const [isOpen, setIsOpen] = useState(true);
+  return isOpen ? (
+    <SettingsModal
+      currentSettings={currentSettings}
+      onSave={() => undefined}
+      onClose={() => setIsOpen(false)}
+      onFallback={onFallback}
+    />
+  ) : null;
+};
+
 describe('SettingsModal voice settings integration', () => {
   beforeEach(() => {
     service.getVoicesForLanguage.mockReset().mockImplementation((language, provider) => {
@@ -60,15 +74,19 @@ describe('SettingsModal voice settings integration', () => {
       return Promise.resolve([voice('spanish-one', 'Spanish One', 'voxtral', ['es'])]);
     });
     service.subscribeToVoiceChanges.mockReset().mockReturnValue(() => undefined);
+    service.stopSpeech.mockReset();
   });
 
   it('saves provider settings, preserves other languages, and maps level changes to shared speed defaults', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
-    render(<SettingsModal currentSettings={currentSettings} onSave={onSave} onClose={() => undefined} />);
+    const onFallback = vi.fn();
+    render(<SettingsModal currentSettings={currentSettings} onSave={onSave} onClose={() => undefined} onFallback={onFallback} />);
 
     expect((screen.getByRole('radio', { name: 'Voxtral' }) as HTMLInputElement).checked).toBe(true);
     await screen.findByRole('option', { name: 'Spanish One' });
+    await user.click(screen.getByRole('button', { name: 'Play sample' }));
+    expect(service.speakText.mock.calls[0][0].onFallback).toBe(onFallback);
 
     await user.click(screen.getByRole('radio', { name: 'Browser' }));
     await screen.findByRole('option', { name: 'Monica' });
@@ -92,5 +110,18 @@ describe('SettingsModal voice settings integration', () => {
       browserVoiceName: 'Monica',
     });
     expect(getTTSPreference(saved.tts, Language.German)).toEqual(currentSettings.tts.preferences[Language.German]);
+  });
+
+  it('stops a voice preview when settings close', async () => {
+    const user = userEvent.setup();
+    render(<SettingsModalHost onFallback={() => undefined} />);
+
+    await screen.findByRole('option', { name: 'Spanish One' });
+    await user.click(screen.getByRole('button', { name: 'Play sample' }));
+    service.stopSpeech.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Close settings' }));
+
+    expect(service.stopSpeech).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull();
   });
 });

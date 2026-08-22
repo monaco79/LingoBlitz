@@ -19,6 +19,7 @@ export interface VoiceSettingsProps {
   level: Level;
   value: TTSSettings;
   onChange: (value: TTSSettings) => void;
+  onFallback: () => void;
 }
 
 const isCompatibleVoxtralVoice = (voice: TTSVoiceOption, language: Language): boolean => {
@@ -29,7 +30,7 @@ const isCompatibleVoxtralVoice = (voice: TTSVoiceOption, language: Language): bo
   });
 };
 
-const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, onChange }) => {
+const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, onChange, onFallback }) => {
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
   const [voices, setVoices] = useState<TTSVoiceOption[]>([]);
@@ -81,6 +82,10 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
       setBrowserVoiceRevision((revision) => revision + 1);
     });
   }, [activeProvider, language]);
+
+  useEffect(() => () => {
+    ttsService.stopSpeech();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -148,6 +153,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
         idPrefix: 'voice-preview',
         language,
         settings: valueRef.current,
+        onFallback,
       });
     } catch (error) {
       console.error('Failed to play sample:', error);

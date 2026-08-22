@@ -1,7 +1,10 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { PlaybackSnapshot } from './services/tts/playbackController';
+import type { TTSVoiceOption } from './services/tts/types';
 import type { SpeakTextRequest } from './services/ttsService';
 import { Language, Level, Topic } from './types';
 import App from './App';
@@ -14,10 +17,31 @@ const ai = vi.hoisted(() => ({
   translateWord: vi.fn(async () => 'translation'),
 }));
 
-const tts = vi.hoisted(() => ({
-  speakText: vi.fn<(request: SpeakTextRequest) => Promise<void>>(async () => undefined),
-  stopSpeech: vi.fn(),
-}));
+const tts = vi.hoisted(() => {
+  let listener: ((snapshot: PlaybackSnapshot) => void) | null = null;
+  let snapshot: PlaybackSnapshot = { status: 'idle', activeSegmentId: null, source: null };
+  return {
+    emit(next: PlaybackSnapshot) {
+      snapshot = next;
+      listener?.(next);
+    },
+    getPlaybackSnapshot: vi.fn(() => snapshot),
+    getVoicesForLanguage: vi.fn(),
+    reset() {
+      listener = null;
+      snapshot = { status: 'idle', activeSegmentId: null, source: null };
+    },
+    speakText: vi.fn<(request: SpeakTextRequest) => Promise<void>>(async () => undefined),
+    stopSpeech: vi.fn(),
+    subscribeToPlayback: vi.fn((nextListener: (next: PlaybackSnapshot) => void) => {
+      listener = nextListener;
+      return () => {
+        if (listener === nextListener) listener = null;
+      };
+    }),
+    subscribeToVoiceChanges: vi.fn(() => () => undefined),
+  };
+});
 
 vi.mock('./services/aiService', () => ai);
 vi.mock('./services/ttsService', () => tts);
@@ -42,9 +66,18 @@ const renderReadyApp = async (proposal = 'Reisen') => {
 describe('App TTS integration', () => {
   beforeEach(() => {
     localStorage.clear();
+    tts.reset();
     vi.clearAllMocks();
     ai.translateWord.mockResolvedValue('translation');
     tts.speakText.mockResolvedValue(undefined);
+    const spanishVoice: TTSVoiceOption = {
+      id: 'spanish-one',
+      name: 'Spanish One',
+      displayName: 'Spanish One',
+      provider: 'voxtral',
+      languages: ['es'],
+    };
+    tts.getVoicesForLanguage.mockResolvedValue([spanishVoice]);
   });
 
   it('safely rejects malformed persisted settings and returns to onboarding', () => {
@@ -64,7 +97,7 @@ describe('App TTS integration', () => {
 
     expect(tts.speakText).toHaveBeenCalledExactlyOnceWith({
       text: 'reisen',
-      idPrefix: 'word',
+      idPrefix: expect.stringMatching(/^clicked-word-\d+$/),
       language: Language.German,
       settings: {
         preferences: {
@@ -79,6 +112,22 @@ describe('App TTS integration', () => {
       },
       onFallback: expect.any(Function),
     });
+  });
+
+  it('gives clicked-word speech an addressable popup unit and highlights it from the controller snapshot', async () => {
+    storeSettings(Language.German, { voice: 'Legacy Anna', speed: 0.8, autoRead: true });
+    await renderReadyApp();
+
+    fireEvent.click(screen.getByText('Reisen'));
+    const request = tts.speakText.mock.calls[0][0];
+    const visibleSentenceId = `${request.idPrefix}-0`;
+    const popupWord = screen.getByText('reisen');
+    expect(popupWord.closest('[data-visible-sentence-id]')?.getAttribute('data-visible-sentence-id'))
+      .toBe(visibleSentenceId);
+
+    act(() => tts.emit({ status: 'playing', activeSegmentId: visibleSentenceId, source: 'voxtral' }));
+
+    expect(popupWord.closest('[data-visible-sentence-id]')?.getAttribute('data-active-sentence')).toBe('true');
   });
 
   it('shows one safe fallback notice when the playback callback reports a real fallback', async () => {
@@ -128,5 +177,20 @@ describe('App TTS integration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New Proposals' }));
 
     await waitFor(() => expect(tts.stopSpeech).toHaveBeenCalledTimes(1));
+  });
+
+  it('uses the App-owned fallback notice for an Onboarding voice preview', async () => {
+    const user = userEvent.setup();
+    tts.speakText.mockImplementation(async (request) => request.onFallback?.());
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: Topic.Travel }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('option', { name: 'Spanish One' });
+    await user.click(screen.getByRole('button', { name: 'Play sample' }));
+
+    expect(await screen.findByRole('status')).not.toBeNull();
   });
 });

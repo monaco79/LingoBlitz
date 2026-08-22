@@ -13,6 +13,7 @@ import VoiceSettings from './VoiceSettings';
 const service = vi.hoisted(() => ({
   getVoicesForLanguage: vi.fn(),
   speakText: vi.fn((_request: SpeakTextRequest) => Promise.resolve()),
+  stopSpeech: vi.fn(),
   subscribeToVoiceChanges: vi.fn((_listener: () => void) => () => undefined),
 }));
 
@@ -35,12 +36,14 @@ const browserVoice = (name: string, language: string): TTSVoiceOption => ({
 interface HarnessProps {
   language?: Language;
   initialValue?: TTSSettings;
+  onFallback?: () => void;
   onValue?: (value: TTSSettings) => void;
 }
 
 const Harness = ({
   language = Language.Spanish,
   initialValue = createDefaultTTSSettings(language, 0.8),
+  onFallback,
   onValue,
 }: HarnessProps) => {
   const [value, setValue] = useState(initialValue);
@@ -50,6 +53,7 @@ const Harness = ({
       language={language}
       level={Level.A2}
       value={value}
+      onFallback={onFallback}
       onChange={(next) => {
         setValue(next);
         onValue?.(next);
@@ -62,6 +66,7 @@ describe('VoiceSettings', () => {
   beforeEach(() => {
     service.getVoicesForLanguage.mockReset();
     service.speakText.mockReset().mockResolvedValue(undefined);
+    service.stopSpeech.mockReset();
     service.subscribeToVoiceChanges.mockReset().mockReturnValue(() => undefined);
   });
 
@@ -220,11 +225,12 @@ describe('VoiceSettings', () => {
 
   it('previews with the current language, provider, selected voice, and speed', async () => {
     const user = userEvent.setup();
+    const onFallback = vi.fn();
     service.getVoicesForLanguage.mockResolvedValue([
       voxtralVoice('spanish', 'Spanish preset', ['es']),
     ]);
 
-    render(<Harness />);
+    const { unmount } = render(<Harness onFallback={onFallback} />);
     await screen.findByRole('option', { name: 'Spanish preset' });
     await user.click(screen.getByRole('button', { name: 'Play sample' }));
 
@@ -233,12 +239,16 @@ describe('VoiceSettings', () => {
       idPrefix: 'voice-preview',
       language: Language.Spanish,
       settings: expect.objectContaining({ speed: 0.8 }),
+      onFallback,
     });
     const request = service.speakText.mock.calls[0][0];
     expect(getTTSPreference(request.settings, Language.Spanish)).toMatchObject({
       provider: 'voxtral',
       voxtralVoiceId: 'spanish',
     });
+
+    unmount();
+    expect(service.stopSpeech).toHaveBeenCalledTimes(1);
   });
 
   it('updates speed and auto-read without discarding any language voice preferences', async () => {
@@ -286,6 +296,7 @@ describe('VoiceSettings', () => {
         language={Language.Spanish}
         level={Level.A2}
         value={createDefaultTTSSettings(Language.Spanish)}
+        onFallback={() => undefined}
         onChange={() => undefined}
       />,
     );
@@ -294,6 +305,7 @@ describe('VoiceSettings', () => {
         language={Language.French}
         level={Level.A2}
         value={createDefaultTTSSettings(Language.French)}
+        onFallback={() => undefined}
         onChange={() => undefined}
       />,
     );

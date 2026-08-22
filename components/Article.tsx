@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { PlaybackSnapshot } from '../services/tts/playbackController';
 import { createSpeechSegments } from '../services/tts/textSegments';
@@ -14,6 +14,8 @@ interface ArticleProps {
   language: Language;
   onWordClick: (word: string, event: React.MouseEvent<HTMLSpanElement>) => void;
   onFallback: () => void;
+  isActiveSurface: boolean;
+  isAutoReadReady: boolean;
 }
 
 const Article: React.FC<ArticleProps> = ({
@@ -24,8 +26,12 @@ const Article: React.FC<ArticleProps> = ({
   language,
   onWordClick,
   onFallback,
+  isActiveSurface,
+  isAutoReadReady,
 }) => {
   const [playback, setPlayback] = useState<PlaybackSnapshot>(() => ttsService.getPlaybackSnapshot());
+  const autoReadTimerRef = useRef<number | null>(null);
+  const autoReadTriggeredRef = useRef(false);
   const titleSegments = useMemo(
     () => createSpeechSegments(title, language, 'article-title'),
     [language, title],
@@ -52,7 +58,21 @@ const Article: React.FC<ArticleProps> = ({
     ttsService.stopSpeech();
   }, [content, language, title]);
 
-  const play = useCallback(() => {
+  const cancelPendingAutoRead = useCallback((markTriggered = true) => {
+    if (autoReadTimerRef.current !== null) {
+      window.clearTimeout(autoReadTimerRef.current);
+      autoReadTimerRef.current = null;
+    }
+    if (markTriggered) autoReadTriggeredRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    cancelPendingAutoRead(false);
+    autoReadTriggeredRef.current = false;
+    return () => cancelPendingAutoRead(false);
+  }, [cancelPendingAutoRead, content, language, title]);
+
+  const playSegments = useCallback(() => {
     if (playbackSegments.length === 0) return;
     void ttsService.speakSegments({
       segments: playbackSegments,
@@ -64,19 +84,69 @@ const Article: React.FC<ArticleProps> = ({
     });
   }, [language, onFallback, playbackSegments, ttsSettings]);
 
+  const play = useCallback(() => {
+    cancelPendingAutoRead();
+    playSegments();
+  }, [cancelPendingAutoRead, playSegments]);
+
   useEffect(() => {
-    if (!ttsSettings.autoRead || playbackSegments.length === 0) return undefined;
-    const timer = window.setTimeout(play, 800);
-    return () => window.clearTimeout(timer);
-  }, [play, playbackSegments.length, ttsSettings.autoRead]);
+    cancelPendingAutoRead(false);
+    if (!isActiveSurface) {
+      cancelPendingAutoRead();
+      return undefined;
+    }
+    if (
+      !isAutoReadReady
+      || !ttsSettings.autoRead
+      || playbackSegments.length === 0
+      || autoReadTriggeredRef.current
+    ) return undefined;
+
+    autoReadTimerRef.current = window.setTimeout(() => {
+      autoReadTimerRef.current = null;
+      if (autoReadTriggeredRef.current) return;
+      autoReadTriggeredRef.current = true;
+      playSegments();
+    }, 800);
+
+    return () => cancelPendingAutoRead(false);
+  }, [
+    cancelPendingAutoRead,
+    isActiveSurface,
+    isAutoReadReady,
+    playSegments,
+    playbackSegments.length,
+    ttsSettings.autoRead,
+  ]);
 
   const handleWordClick = useCallback((word: string, event: React.MouseEvent<HTMLSpanElement>) => {
+    cancelPendingAutoRead();
     ttsService.stopSpeech();
     onWordClick(word, event);
-  }, [onWordClick]);
+  }, [cancelPendingAutoRead, onWordClick]);
 
-  const isActive = playback.status !== 'idle';
-  const isPaused = playback.status === 'paused';
+  const handlePause = useCallback(() => {
+    cancelPendingAutoRead();
+    ttsService.pauseSpeech();
+  }, [cancelPendingAutoRead]);
+
+  const handleResume = useCallback(() => {
+    cancelPendingAutoRead();
+    ttsService.resumeSpeech();
+  }, [cancelPendingAutoRead]);
+
+  const handleStop = useCallback(() => {
+    cancelPendingAutoRead();
+    ttsService.stopSpeech();
+  }, [cancelPendingAutoRead]);
+
+  const ownedVisibleIds = useMemo(
+    () => new Set(playbackSegments.map(({ visibleSentenceId }) => visibleSentenceId)),
+    [playbackSegments],
+  );
+  const ownsPlayback = playback.activeSegmentId !== null && ownedVisibleIds.has(playback.activeSegmentId);
+  const isActive = isActiveSurface && ownsPlayback && playback.status !== 'idle';
+  const isPaused = isActive && playback.status === 'paused';
 
   return (
     <div className="bg-white dark:bg-gray-800 p-6 md:p-8 rounded-lingoblitz shadow-lg max-w-4xl w-full">
@@ -93,7 +163,7 @@ const Article: React.FC<ArticleProps> = ({
             <>
               <button
                 type="button"
-                onClick={isPaused ? ttsService.resumeSpeech : ttsService.pauseSpeech}
+                onClick={isPaused ? handleResume : handlePause}
                 className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
                 title={isPaused ? 'Resume' : 'Pause'}
               >
@@ -110,7 +180,7 @@ const Article: React.FC<ArticleProps> = ({
               </button>
               <button
                 type="button"
-                onClick={ttsService.stopSpeech}
+                onClick={handleStop}
                 className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
                 title="Stop"
               >

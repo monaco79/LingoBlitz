@@ -67,6 +67,7 @@ const renderQuiz = (overrides: Partial<React.ComponentProps<typeof Quiz>> = {}) 
     onPracticeVocabulary: vi.fn(),
     hasCompletedVocabulary: false,
     onFallback: vi.fn(),
+    isActiveSurface: true,
     ...overrides,
   };
   return { props, ...render(<Quiz {...props} />) };
@@ -100,14 +101,14 @@ describe('Quiz sentence playback', () => {
   it('highlights the active sentence and delegates pause, resume, and stop', () => {
     renderQuiz();
 
-    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-1-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-1', source: 'voxtral' }));
     const activeSentence = screen.getByText('Erkläre').closest('[data-visible-sentence-id]');
     expect(activeSentence?.getAttribute('data-active-sentence')).toBe('true');
     expect(screen.getAllByTestId('visible-sentence').filter((node) => node.dataset.activeSentence === 'true')).toHaveLength(1);
 
     fireEvent.click(screen.getByTitle('Pause'));
     expect(tts.pauseSpeech).toHaveBeenCalledTimes(1);
-    act(() => tts.emit({ status: 'paused', activeSegmentId: 'quiz-question-1-0', source: 'voxtral' }));
+    act(() => tts.emit({ status: 'paused', activeSegmentId: 'quiz-question-1', source: 'voxtral' }));
     fireEvent.click(screen.getByTitle('Resume'));
     expect(tts.resumeSpeech).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTitle('Stop'));
@@ -128,6 +129,66 @@ describe('Quiz sentence playback', () => {
     fireEvent.click(screen.getByRole('button', { name: /submit your answer/i }));
     expect(order).toEqual(['stop', 'word', 'stop', 'submit']);
     expect(onAnswerSubmit).toHaveBeenCalledWith('Meine Antwort');
+  });
+
+  it.each([
+    { action: 'manual play', run: () => fireEvent.click(screen.getByTitle('Play')) },
+    { action: 'word click', run: () => fireEvent.click(screen.getByText('Erkläre')) },
+    { action: 'submit', run: () => {
+      fireEvent.change(screen.getByPlaceholderText('Type your answer here...'), { target: { value: 'Antwort' } });
+      fireEvent.click(screen.getByRole('button', { name: /submit your answer/i }));
+    } },
+  ])('cancels pending question auto-read after $action', ({ run }) => {
+    vi.useFakeTimers();
+    renderQuiz({ ttsSettings: { ...settings, autoRead: true } });
+
+    run();
+    const callsAfterAction = tts.speakSegments.mock.calls.length;
+    act(() => vi.advanceTimersByTime(800));
+
+    expect(tts.speakSegments).toHaveBeenCalledTimes(callsAfterAction);
+  });
+
+  it.each(['Pause', 'Stop'])('cancels pending question auto-read after %s', (action) => {
+    vi.useFakeTimers();
+    renderQuiz({ ttsSettings: { ...settings, autoRead: true } });
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'quiz-question-0', source: 'voxtral' }));
+
+    fireEvent.click(screen.getByTitle(action));
+    act(() => vi.advanceTimersByTime(800));
+
+    expect(tts.speakSegments).not.toHaveBeenCalled();
+  });
+
+  it('cancels pending auto-read when the Quiz surface becomes inactive', () => {
+    vi.useFakeTimers();
+    const { props, rerender } = renderQuiz({ ttsSettings: { ...settings, autoRead: true } });
+
+    act(() => vi.advanceTimersByTime(400));
+    rerender(<Quiz {...props} isActiveSurface={false} />);
+    act(() => vi.advanceTimersByTime(800));
+
+    expect(tts.speakSegments).not.toHaveBeenCalled();
+  });
+
+  it('does not show controls for Article playback mounted at the same time', () => {
+    renderQuiz();
+
+    act(() => tts.emit({ status: 'playing', activeSegmentId: 'article-body-0-0', source: 'voxtral' }));
+
+    expect(screen.queryByTitle('Pause')).toBeNull();
+    expect(screen.getByTitle('Play')).not.toBeNull();
+  });
+
+  it('preserves Markdown emphasis in display while speaking clean sentence text', () => {
+    renderQuiz({ feedback: 'Das ist **sehr gut**. Weiter so!' });
+
+    const emphasizedWord = screen.getByText('sehr');
+    expect(emphasizedWord.closest('strong')).not.toBeNull();
+    fireEvent.click(screen.getByTitle('Play'));
+    const request = tts.speakSegments.mock.calls[0][0];
+    expect(request.segments[0].displayText).toContain('**sehr gut**');
+    expect(request.segments[0].spokenText).toBe('Das ist sehr gut.');
   });
 
   it('stops playback when speech content changes and when unmounted', () => {

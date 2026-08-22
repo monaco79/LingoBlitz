@@ -23,7 +23,7 @@ const segments: SpeechSegment[] = [
 
 describe('SpeakableText', () => {
   it('marks the active visible sentence with semantic and accessible state', () => {
-    render(<SpeakableText segments={segments} language={Language.German} activeSegmentId="article-1-0" />);
+    render(<SpeakableText segments={segments} language={Language.German} activeSegmentId="article-1" />);
     const visibleSentences = screen.getAllByTestId('visible-sentence');
 
     expect(visibleSentences[0].getAttribute('data-active-sentence')).not.toBe('true');
@@ -49,7 +49,7 @@ describe('SpeakableText', () => {
           { ...segments[0], id: 'article-0-1', spokenText: 'Welt!' },
         ]}
         language={Language.German}
-        activeSegmentId="article-0-1"
+        activeSegmentId="article-0"
       />,
     );
 

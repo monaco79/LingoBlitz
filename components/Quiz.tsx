@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import LoadingSpinner from './icons/LoadingSpinner';
 import { TTSSettings, Language } from '../types';
 import * as ttsService from '../services/ttsService';
@@ -19,6 +19,7 @@ interface QuizProps {
   onPracticeVocabulary: () => void;
   hasCompletedVocabulary: boolean;
   onFallback: () => void;
+  isActiveSurface: boolean;
 }
 
 const Quiz: React.FC<QuizProps> = ({
@@ -34,16 +35,19 @@ const Quiz: React.FC<QuizProps> = ({
   onPracticeVocabulary,
   hasCompletedVocabulary,
   onFallback,
+  isActiveSurface,
 }) => {
   const [answer, setAnswer] = useState('');
   const [playback, setPlayback] = useState<PlaybackSnapshot>(() => ttsService.getPlaybackSnapshot());
+  const autoReadTimerRef = useRef<number | null>(null);
+  const autoReadTriggeredRef = useRef(false);
   const questionSegments = useMemo(
-    () => createSpeechSegments(question.replace(/[*#_]/g, ''), language, 'quiz-question'),
+    () => createSpeechSegments(question, language, 'quiz-question'),
     [language, question],
   );
   const feedbackSegments = useMemo(
     () => feedback
-      ? createSpeechSegments(feedback.replace(/[*#_]/g, ''), language, 'quiz-feedback')
+      ? createSpeechSegments(feedback, language, 'quiz-feedback')
       : [],
     [feedback, language],
   );
@@ -55,7 +59,21 @@ const Quiz: React.FC<QuizProps> = ({
     ttsService.stopSpeech();
   }, [feedback, language, question]);
 
-  const handlePlay = useCallback(() => {
+  const cancelPendingAutoRead = useCallback((markTriggered = true) => {
+    if (autoReadTimerRef.current !== null) {
+      window.clearTimeout(autoReadTimerRef.current);
+      autoReadTimerRef.current = null;
+    }
+    if (markTriggered) autoReadTriggeredRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    cancelPendingAutoRead(false);
+    autoReadTriggeredRef.current = false;
+    return () => cancelPendingAutoRead(false);
+  }, [cancelPendingAutoRead, feedback, language, question]);
+
+  const playSegments = useCallback(() => {
     const playableSegments = currentSegments.filter(({ spokenText }) => spokenText.length > 0);
     if (playableSegments.length === 0) return;
     void ttsService.speakSegments({
@@ -68,27 +86,74 @@ const Quiz: React.FC<QuizProps> = ({
     });
   }, [currentSegments, language, onFallback, ttsSettings]);
 
+  const handlePlay = useCallback(() => {
+    cancelPendingAutoRead();
+    playSegments();
+  }, [cancelPendingAutoRead, playSegments]);
+
   useEffect(() => {
-    if (!ttsSettings.autoRead || currentSegments.length === 0) return undefined;
-    const timer = window.setTimeout(handlePlay, 800);
-    return () => window.clearTimeout(timer);
-  }, [currentSegments, handlePlay, ttsSettings.autoRead]);
+    cancelPendingAutoRead(false);
+    if (!isActiveSurface) {
+      cancelPendingAutoRead();
+      return undefined;
+    }
+    if (!ttsSettings.autoRead || currentSegments.length === 0 || autoReadTriggeredRef.current) {
+      return undefined;
+    }
+
+    autoReadTimerRef.current = window.setTimeout(() => {
+      autoReadTimerRef.current = null;
+      if (autoReadTriggeredRef.current) return;
+      autoReadTriggeredRef.current = true;
+      playSegments();
+    }, 800);
+
+    return () => cancelPendingAutoRead(false);
+  }, [cancelPendingAutoRead, currentSegments.length, isActiveSurface, playSegments, ttsSettings.autoRead]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (answer.trim()) {
+      cancelPendingAutoRead();
       ttsService.stopSpeech();
       onAnswerSubmit(answer.trim());
     }
   };
 
   const handleWordClick = useCallback((word: string, event: React.MouseEvent<HTMLSpanElement>) => {
+    cancelPendingAutoRead();
     ttsService.stopSpeech();
     onWordClick?.(word, event);
-  }, [onWordClick]);
+  }, [cancelPendingAutoRead, onWordClick]);
 
-  const isPlaying = playback.status !== 'idle';
-  const isPaused = playback.status === 'paused';
+  const handlePause = useCallback(() => {
+    cancelPendingAutoRead();
+    ttsService.pauseSpeech();
+  }, [cancelPendingAutoRead]);
+
+  const handleResume = useCallback(() => {
+    cancelPendingAutoRead();
+    ttsService.resumeSpeech();
+  }, [cancelPendingAutoRead]);
+
+  const handleStop = useCallback(() => {
+    cancelPendingAutoRead();
+    ttsService.stopSpeech();
+  }, [cancelPendingAutoRead]);
+
+  const leaveQuiz = useCallback((next: () => void) => {
+    cancelPendingAutoRead();
+    ttsService.stopSpeech();
+    next();
+  }, [cancelPendingAutoRead]);
+
+  const ownedVisibleIds = useMemo(
+    () => new Set(currentSegments.map(({ visibleSentenceId }) => visibleSentenceId)),
+    [currentSegments],
+  );
+  const ownsPlayback = playback.activeSegmentId !== null && ownedVisibleIds.has(playback.activeSegmentId);
+  const isPlaying = isActiveSurface && ownsPlayback && playback.status !== 'idle';
+  const isPaused = isPlaying && playback.status === 'paused';
 
   // Render helper for audio controls
   const renderAudioControls = () => (
@@ -97,7 +162,7 @@ const Quiz: React.FC<QuizProps> = ({
         <>
           <button
             type="button"
-            onClick={isPaused ? ttsService.resumeSpeech : ttsService.pauseSpeech}
+            onClick={isPaused ? handleResume : handlePause}
             className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
             title={isPaused ? "Resume" : "Pause"}
           >
@@ -116,7 +181,7 @@ const Quiz: React.FC<QuizProps> = ({
           </button>
           <button
             type="button"
-            onClick={ttsService.stopSpeech}
+            onClick={handleStop}
             className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
             title="Stop"
           >
@@ -167,6 +232,7 @@ const Quiz: React.FC<QuizProps> = ({
                 language={language}
                 activeSegmentId={playback.activeSegmentId}
                 onWordClick={onWordClick ? handleWordClick : undefined}
+                renderEmphasis
               />
             </p>
           </div>
@@ -211,6 +277,7 @@ const Quiz: React.FC<QuizProps> = ({
                 language={language}
                 activeSegmentId={playback.activeSegmentId}
                 onWordClick={onWordClick ? handleWordClick : undefined}
+                renderEmphasis
               />
             </p>
           </div>
@@ -218,14 +285,14 @@ const Quiz: React.FC<QuizProps> = ({
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             {showPracticeButton && (
               <button
-                onClick={onPracticeVocabulary}
+                onClick={() => leaveQuiz(onPracticeVocabulary)}
                 className={practiceButtonClass}
               >
                 Practice Vocabulary
               </button>
             )}
             <button
-              onClick={onContinue}
+              onClick={() => leaveQuiz(onContinue)}
               className={nextBlitzButtonClass}
             >
               Next Blitz

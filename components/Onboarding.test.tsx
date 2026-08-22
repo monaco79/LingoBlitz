@@ -6,12 +6,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LEVEL_TTS_SPEEDS } from '../constants';
 import { getTTSPreference } from '../services/tts/settings';
 import type { TTSVoiceOption } from '../services/tts/types';
+import type { SpeakTextRequest } from '../services/ttsService';
 import { Language, Level, Topic, type UserSettings } from '../types';
 import Onboarding from './Onboarding';
 
 const service = vi.hoisted(() => ({
   getVoicesForLanguage: vi.fn(),
-  speakText: vi.fn(async () => undefined),
+  speakText: vi.fn<(request: SpeakTextRequest) => Promise<void>>(async () => undefined),
+  stopSpeech: vi.fn(),
   subscribeToVoiceChanges: vi.fn(() => () => undefined),
 }));
 
@@ -34,12 +36,14 @@ describe('Onboarding voice settings integration', () => {
       return Promise.resolve([voice('spanish-one', 'Spanish One', 'voxtral', ['es'])]);
     });
     service.subscribeToVoiceChanges.mockReset().mockReturnValue(() => undefined);
+    service.stopSpeech.mockReset();
   });
 
   it('progresses with a compatible provider voice while retaining prior-language preferences and level speed', async () => {
     const user = userEvent.setup();
     const onComplete = vi.fn();
-    render(<Onboarding onComplete={onComplete} />);
+    const onFallback = vi.fn();
+    render(<Onboarding onComplete={onComplete} onFallback={onFallback} />);
 
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.selectOptions(screen.getByLabelText('My level in my learning language is...'), Level.B2);
@@ -51,8 +55,12 @@ describe('Onboarding voice settings integration', () => {
     expect(await screen.findByRole('option', { name: 'Spanish One' })).not.toBeNull();
     expect((screen.getByRole('slider', { name: /Speed:/ }) as HTMLInputElement).value)
       .toBe(String(LEVEL_TTS_SPEEDS[Level.B2]));
+    await user.click(screen.getByRole('button', { name: 'Play sample' }));
+    expect(service.speakText.mock.calls[0][0].onFallback).toBe(onFallback);
 
+    service.stopSpeech.mockClear();
     await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(service.stopSpeech).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole('button', { name: 'Back' }));
     await user.click(screen.getByRole('button', { name: 'Back' }));
     await user.selectOptions(screen.getByLabelText('I want to learn...'), Language.German);

@@ -11,9 +11,10 @@ interface SettingsModalProps {
   currentSettings: UserSettings;
   onSave: (newSettings: UserSettings) => void;
   onClose: () => void;
+  onFallback: () => void;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ currentSettings, onSave, onClose }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ currentSettings, onSave, onClose, onFallback }) => {
   const [settings, setSettings] = useState<UserSettings>(() => ({
     ...currentSettings,
     tts: migrateTTSSettings(currentSettings.tts, currentSettings.learningLanguage),
@@ -88,6 +89,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ currentSettings, onSave, 
               level={settings.level}
               value={settings.tts}
               onChange={(tts) => updateSettings('tts', tts)}
+              onFallback={onFallback}
             />
           </div>
         </div>

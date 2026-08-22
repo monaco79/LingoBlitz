@@ -1,7 +1,7 @@
 // Last updated: 2025-11-15 18:15
 // Design update: Gradient flashcard, white buttons with red/green borders, progress bar
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { VocabularyItem, TTSSettings, Language } from '../types';
 import * as ttsService from '../services/ttsService';
 import type { PlaybackSnapshot } from '../services/tts/playbackController';
@@ -16,6 +16,8 @@ interface VocabularyPracticeProps {
   onFallback: () => void;
 }
 
+type PracticeCard = VocabularyItem & { speechIdPrefix: string };
+
 const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
   vocabulary,
   onComplete,
@@ -23,8 +25,13 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
   ttsSettings,
   onFallback,
 }) => {
-  const [wordsToPractice, setWordsToPractice] = useState<VocabularyItem[]>(
-    () => [...vocabulary].sort(() => Math.random() - 0.5),
+  const nextSpeechId = useRef(0);
+  const buildPracticeCards = (items: VocabularyItem[]): PracticeCard[] => items.map((item) => ({
+    ...item,
+    speechIdPrefix: `vocabulary-card-${nextSpeechId.current++}`,
+  }));
+  const [wordsToPractice, setWordsToPractice] = useState<PracticeCard[]>(
+    () => buildPracticeCards(vocabulary).sort(() => Math.random() - 0.5),
   );
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
@@ -40,7 +47,7 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
 
   useEffect(() => {
     // Shuffle the initial vocabulary for variety and reset state on new vocab list
-    setWordsToPractice([...vocabulary].sort(() => Math.random() - 0.5));
+    setWordsToPractice(buildPracticeCards(vocabulary).sort(() => Math.random() - 0.5));
     setCurrentIndex(0);
     setIsFlipped(false);
     setShowConfetti(false);
@@ -50,9 +57,9 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
   const currentItem = wordsToPractice.length > 0 ? wordsToPractice[currentIndex] : null;
   const wordSegments = useMemo(
     () => currentItem
-      ? createSpeechSegments(currentItem.word, learningLanguage, `vocabulary-card-${currentIndex}`)
+      ? createSpeechSegments(currentItem.word, learningLanguage, currentItem.speechIdPrefix)
       : [],
-    [currentIndex, currentItem, learningLanguage],
+    [currentItem, learningLanguage],
   );
 
   useEffect(() => {
@@ -72,9 +79,9 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
   }, [currentItem, learningLanguage, onFallback, showConfetti, ttsSettings, wordSegments]);
 
   const handleKnownWord = () => {
+    ttsService.stopSpeech();
     // If this is the last word, trigger confetti and finish
     if (wordsToPractice.length === 1) {
-      ttsService.stopSpeech();
       setShowConfetti(true);
       setTimeout(() => {
         onComplete();
@@ -91,6 +98,7 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
   };
 
   const handleUnknownWord = () => {
+    ttsService.stopSpeech();
     // Go to the next word in the current list
     setCurrentIndex(prevIndex => (prevIndex + 1) % wordsToPractice.length);
     setIsFlipped(false);
@@ -110,7 +118,9 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
 
   const isLastWordInRound = wordsToPractice.length === 1;
   const progress = totalPracticedWords > 0 ? ((totalPracticedWords - wordsToPractice.length) / totalPracticedWords) * 100 : 0;
-  const isCardActive = wordSegments.some(({ id }) => id === playback.activeSegmentId);
+  const isCardActive = wordSegments.some(
+    ({ visibleSentenceId }) => visibleSentenceId === playback.activeSegmentId,
+  );
 
   return (
     <div className="w-full max-w-4xl p-6 md:p-8 bg-white dark:bg-gray-800 rounded-lingoblitz shadow-lg flex flex-col items-center gap-6 relative">

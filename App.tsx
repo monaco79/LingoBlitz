@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   AppState,
   Language,
@@ -25,6 +25,7 @@ import VocabularyPractice from './components/VocabularyPractice';
 import TTSFallbackNotice from './components/TTSFallbackNotice';
 import * as aiService from './services/aiService';
 import { migrateTTSSettings } from './services/tts/settings';
+import type { PlaybackSnapshot } from './services/tts/playbackController';
 import * as ttsService from './services/ttsService';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -90,6 +91,8 @@ const App: React.FC = () => {
   const [hasCompletedQuiz, setHasCompletedQuiz] = useState(false);
   const [hasCompletedVocabulary, setHasCompletedVocabulary] = useState(false);
   const [ttsFallbackTrigger, setTTSFallbackTrigger] = useState(0);
+  const [playback, setPlayback] = useState<PlaybackSnapshot>(() => ttsService.getPlaybackSnapshot());
+  const clickedWordSequence = useRef(0);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('lingoBlitzTheme') as 'light' | 'dark') || 'light';
   });
@@ -115,6 +118,8 @@ const App: React.FC = () => {
   useEffect(() => {
     ttsService.stopSpeech();
   }, [appState]);
+
+  useEffect(() => ttsService.subscribeToPlayback(setPlayback), []);
 
   const handleTTSFallback = useCallback(() => {
     setTTSFallbackTrigger((current) => current + 1);
@@ -280,11 +285,11 @@ const App: React.FC = () => {
   };
 
   // HELPER: Play word audio
-  const playWordAudio = (word: string) => {
+  const playWordAudio = (word: string, speechIdPrefix: string) => {
     if (userSettings?.tts) {
       void ttsService.speakText({
         text: word,
-        idPrefix: 'word',
+        idPrefix: speechIdPrefix,
         language: userSettings.learningLanguage,
         settings: userSettings.tts,
         onFallback: handleTTSFallback,
@@ -300,22 +305,28 @@ const App: React.FC = () => {
     const rect = event.currentTarget.getBoundingClientRect();
     const popupTop = window.scrollY + rect.top - 85;
     const popupLeft = window.scrollX + rect.left + rect.width / 2;
+    const speechIdPrefix = `clicked-word-${clickedWordSequence.current++}`;
 
-    setTranslationPopup({ word, translation: '...', position: { top: popupTop, left: popupLeft } });
+    setTranslationPopup({
+      word,
+      translation: '...',
+      speechIdPrefix,
+      position: { top: popupTop, left: popupLeft },
+    });
 
     // 1. Stop any existing main audio (handled by Article/Quiz click, but reinforcing here)
     ttsService.stopSpeech();
 
     // 2. Play the word immediately ONLY if auto-read is enabled
     if (userSettings.tts.autoRead) {
-      playWordAudio(word);
+      playWordAudio(word, speechIdPrefix);
     }
 
     // 3. Fetch Translation
     const translation = await aiService.translateWord(word, userSettings.learningLanguage, userSettings.nativeLanguage);
 
     setTranslationPopup(current =>
-      (current && current.word === word)
+      (current && current.speechIdPrefix === speechIdPrefix)
         ? { ...current, translation }
         : current
     );
@@ -389,7 +400,7 @@ const App: React.FC = () => {
 
   const renderContent = () => {
     if (!userSettings) {
-      return <Onboarding onComplete={handleOnboardingComplete} />;
+      return <Onboarding onComplete={handleOnboardingComplete} onFallback={handleTTSFallback} />;
     }
 
     return (
@@ -440,6 +451,8 @@ const App: React.FC = () => {
             language={userSettings.learningLanguage}
             onWordClick={handleWordClick}
             onFallback={handleTTSFallback}
+            isActiveSurface={appState === AppState.GENERATING_ARTICLE || appState === AppState.POST_ARTICLE_CHOICE}
+            isAutoReadReady={appState === AppState.POST_ARTICLE_CHOICE}
           />
         )}
 
@@ -471,6 +484,9 @@ const App: React.FC = () => {
             hasVocabulary={currentVocabulary.length > 0}
             onPracticeVocabulary={handlePracticeVocabulary}
             hasCompletedVocabulary={hasCompletedVocabulary}
+            isActiveSurface={appState === AppState.SHOWING_QUIZ
+              || appState === AppState.EVALUATING_QUIZ
+              || appState === AppState.SHOWING_QUIZ_FEEDBACK}
           />
         )}
 
@@ -513,7 +529,12 @@ const App: React.FC = () => {
       {renderContent()}
       <TTSFallbackNotice trigger={ttsFallbackTrigger} />
       {isSettingsOpen && userSettings && (
-        <SettingsModal currentSettings={userSettings} onSave={handleSaveSettings} onClose={() => setIsSettingsOpen(false)} />
+        <SettingsModal
+          currentSettings={userSettings}
+          onSave={handleSaveSettings}
+          onClose={() => setIsSettingsOpen(false)}
+          onFallback={handleTTSFallback}
+        />
       )}
       {showInfoModal && (
         <InfoModal onClose={() => setShowInfoModal(false)} />
@@ -531,6 +552,7 @@ const App: React.FC = () => {
             style={{ minWidth: '160px', maxWidth: '250px' }}
             onClick={(e) => {
               e.stopPropagation();
+              ttsService.stopSpeech();
               setTranslationPopup(null);
             }}
           >
@@ -538,6 +560,7 @@ const App: React.FC = () => {
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                ttsService.stopSpeech();
                 setTranslationPopup(null);
               }}
               className="absolute -top-2 -right-2 gradient-lingoblitz rounded-full p-1.5 shadow-md hover:opacity-90 transition-opacity"
@@ -547,11 +570,18 @@ const App: React.FC = () => {
 
             {/* Original word with Speaker Button */}
             <div className="flex items-center justify-center gap-2 mb-2">
-              <p className="font-semibold text-gradient-lingoblitz text-base uppercase tracking-wide">{translationPopup.word}</p>
+              <p
+                data-visible-sentence-id={`${translationPopup.speechIdPrefix}-0`}
+                data-active-sentence={playback.activeSegmentId === `${translationPopup.speechIdPrefix}-0` ? 'true' : undefined}
+                aria-current={playback.activeSegmentId === `${translationPopup.speechIdPrefix}-0` ? 'true' : undefined}
+                className="font-semibold text-gradient-lingoblitz text-base uppercase tracking-wide"
+              >
+                {translationPopup.word}
+              </p>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  playWordAudio(translationPopup.word);
+                  playWordAudio(translationPopup.word, translationPopup.speechIdPrefix);
                 }}
                 className="text-gray-400 hover:text-purple-500 transition-colors"
                 title="Play pronunciation"

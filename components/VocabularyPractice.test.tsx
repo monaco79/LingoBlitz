@@ -102,12 +102,31 @@ describe('VocabularyPractice sentence playback', () => {
   it('marks the front card while its sentence unit is active', () => {
     renderPractice();
     act(() => vi.advanceTimersByTime(300));
-    const activeSegmentId = tts.speakSegments.mock.calls[0][0].segments[0].id;
+    const activeSegmentId = tts.speakSegments.mock.calls[0][0].segments[0].visibleSentenceId;
 
     act(() => tts.emit({ status: 'playing', activeSegmentId, source: 'voxtral' }));
 
     expect(screen.getByTestId('vocabulary-card-front').getAttribute('data-active-sentence')).toBe('true');
   });
+
+  it.each(['I know it!', 'Keep practicing'])(
+    'stops immediately and does not carry an active ID onto the replacement card after %s',
+    (action) => {
+      renderPractice();
+      act(() => vi.advanceTimersByTime(300));
+      const firstVisibleId = tts.speakSegments.mock.calls[0][0].segments[0].visibleSentenceId;
+      act(() => tts.emit({ status: 'playing', activeSegmentId: firstVisibleId, source: 'voxtral' }));
+      tts.stopSpeech.mockClear();
+
+      fireEvent.click(screen.getByRole('button', { name: action }));
+
+      expect(tts.stopSpeech).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('vocabulary-card-front').getAttribute('data-active-sentence')).toBeNull();
+      act(() => vi.advanceTimersByTime(300));
+      const secondVisibleId = tts.speakSegments.mock.calls[1][0].segments[0].visibleSentenceId;
+      expect(secondVisibleId).not.toBe(firstVisibleId);
+    },
+  );
 
   it('stops playback when unmounted', () => {
     const { unmount } = renderPractice();

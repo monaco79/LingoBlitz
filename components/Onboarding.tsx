@@ -8,11 +8,12 @@ import VoiceSettings from './VoiceSettings';
 
 interface OnboardingProps {
   onComplete: (settings: UserSettings) => void;
+  onFallback: () => void;
 }
 
 const INITIAL_LEVEL = Level.A2;
 
-const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
+const Onboarding: React.FC<OnboardingProps> = ({ onComplete, onFallback }) => {
   const [step, setStep] = useState(1);
   const [settings, setSettings] = useState<UserSettings>({
     nativeLanguage: Language.English,
@@ -119,6 +120,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
               level={settings.level}
               value={settings.tts}
               onChange={(tts) => updateSettings('tts', tts)}
+              onFallback={onFallback}
             />
           </div>
         );

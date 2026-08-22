@@ -75,6 +75,7 @@ export enum AppState {
 export interface TranslationPopup {
   word: string;
   translation: string;
+  speechIdPrefix: string;
   position: {
     top: number;
     left: number;
