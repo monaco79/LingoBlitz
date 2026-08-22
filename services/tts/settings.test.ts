@@ -37,6 +37,29 @@ describe('TTS settings migration', () => {
     ).toBe('browser');
   });
 
+  it('normalizes a persisted Voxtral provider to browser for unsupported languages', () => {
+    const migrated = migrateTTSSettings(
+      {
+        speed: 1,
+        autoRead: false,
+        preferences: {
+          [Language.Japanese]: {
+            provider: 'voxtral',
+            voxtralVoiceId: 'preset-voice',
+            browserVoiceName: 'Kyoko',
+          },
+        },
+      },
+      Language.Japanese,
+    );
+
+    expect(getTTSPreference(migrated, Language.Japanese)).toEqual({
+      provider: 'browser',
+      voxtralVoiceId: 'preset-voice',
+      browserVoiceName: 'Kyoko',
+    });
+  });
+
   it('normalizes valid saved preferences without dropping other language settings', () => {
     const migrated = migrateTTSSettings(
       {

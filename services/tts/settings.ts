@@ -24,10 +24,14 @@ const readPreference = (value: unknown, language: Language): LanguageTTSPreferen
   const fallback = defaultPreference(language);
   if (!isRecord(value)) return fallback;
 
-  const provider: TTSProvider =
+  const savedProvider: TTSProvider | null =
     value.provider === 'voxtral' || value.provider === 'browser'
       ? value.provider
-      : fallback.provider;
+      : null;
+  const provider: TTSProvider =
+    savedProvider === 'voxtral' && !isVoxtralSupported(language)
+      ? 'browser'
+      : savedProvider ?? fallback.provider;
 
   return {
     provider,
