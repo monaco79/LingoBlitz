@@ -17,6 +17,10 @@ export type TTSErrorCategory =
   | 'upstream'
   | 'invalid_response';
 
+const PRESET_VOICE_CACHE_TTL_MS = 15 * 60 * 1_000;
+
+let presetVoicesCache: { voices: MistralVoice[]; expiresAt: number } | null = null;
+
 const ERROR_MESSAGES: Record<TTSErrorCategory, string> = {
   disabled: 'Mistral TTS is disabled',
   configuration: 'Mistral TTS configuration is invalid',
@@ -175,6 +179,25 @@ export async function listPresetVoices(
 ): Promise<MistralVoice[]> {
   const payload = await requestJson(config, '/audio/voices?type=preset&limit=1000', { method: 'GET' }, fetchImpl);
   return parseVoices(payload);
+}
+
+export async function getCachedPresetVoices(
+  config: TTSConfig,
+  fetchImpl?: typeof fetch,
+  now = Date.now(),
+): Promise<MistralVoice[]> {
+  if (presetVoicesCache && presetVoicesCache.expiresAt > now) {
+    return presetVoicesCache.voices;
+  }
+
+  const voices = await listPresetVoices(config, fetchImpl);
+  presetVoicesCache = { voices, expiresAt: now + PRESET_VOICE_CACHE_TTL_MS };
+  return voices;
+}
+
+/** Test-only cache cleanup for isolated module-level cache assertions. */
+export function resetPresetVoicesCacheForTests(): void {
+  presetVoicesCache = null;
 }
 
 export async function generateSpeech(

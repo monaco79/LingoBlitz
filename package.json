@@ -11,7 +11,7 @@
     "dev:api": "vercel dev",
     "build": "vite build",
     "test": "npm run test:api && npm run test:ui",
-    "test:api": "node --test api/_lib/*.test.ts",
+    "test:api": "node --test api/_lib/*.test.ts api/tts/*.test.ts",
     "test:ui": "vitest run",
     "test:ui:watch": "vitest",
     "preview": "vite preview"

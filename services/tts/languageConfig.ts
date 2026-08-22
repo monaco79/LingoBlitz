@@ -1,13 +1,13 @@
-import { Language } from '../../types';
+import type { Language } from '../../types.ts';
 
 const MISTRAL_LANGUAGE_CODES: Partial<Record<Language, string>> = {
-  [Language.English]: 'en',
-  [Language.French]: 'fr',
-  [Language.German]: 'de',
-  [Language.Spanish]: 'es',
-  [Language.Dutch]: 'nl',
-  [Language.Portuguese]: 'pt',
-  [Language.Italian]: 'it',
+  English: 'en',
+  French: 'fr',
+  German: 'de',
+  Spanish: 'es',
+  Dutch: 'nl',
+  Portuguese: 'pt',
+  Italian: 'it',
 };
 
 export const isVoxtralSupported = (language: Language): boolean =>

@@ -1,7 +1,13 @@
 import * as assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import { generateSpeech, listPresetVoices, TTSError } from './mistral-tts.ts';
+import {
+  generateSpeech,
+  getCachedPresetVoices,
+  listPresetVoices,
+  resetPresetVoicesCacheForTests,
+  TTSError,
+} from './mistral-tts.ts';
 import type { TTSConfig } from './tts-config.ts';
 
 const config: TTSConfig = {
@@ -26,6 +32,28 @@ test('lists preset voices with Mistral bearer authentication', async () => {
   assert.equal(request?.input, 'https://api.mistral.ai/v1/audio/voices?type=preset&limit=1000');
   assert.equal(request?.init?.method, 'GET');
   assert.equal((request?.init?.headers as Headers).get('authorization'), 'Bearer test-secret-key');
+});
+
+test('caches the complete preset voice list for fifteen minutes', async () => {
+  resetPresetVoicesCacheForTests();
+  let upstreamCalls = 0;
+  const fetchImpl = (async () => {
+    upstreamCalls += 1;
+    return Response.json({ data: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }] });
+  }) as typeof fetch;
+
+  try {
+    const first = await getCachedPresetVoices(config, fetchImpl, 1_000);
+    const second = await getCachedPresetVoices(config, fetchImpl, 1_000 + (15 * 60 * 1_000) - 1);
+    const refreshed = await getCachedPresetVoices(config, fetchImpl, 1_000 + (15 * 60 * 1_000));
+
+    assert.deepEqual(first, [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }]);
+    assert.deepEqual(second, first);
+    assert.deepEqual(refreshed, first);
+    assert.equal(upstreamCalls, 2);
+  } finally {
+    resetPresetVoicesCacheForTests();
+  }
 });
 
 test('generates MP3 speech and decodes the returned Base64 audio', async () => {
