@@ -41,7 +41,6 @@ const readPreference = (value: unknown, language: Language): LanguageTTSPreferen
 };
 
 export const createDefaultTTSSettings = (language: Language, speed = DEFAULT_SPEED): TTSSettings => ({
-  voice: '',
   preferences: {
     [language]: defaultPreference(language),
   },
@@ -52,7 +51,7 @@ export const createDefaultTTSSettings = (language: Language, speed = DEFAULT_SPE
 export const getTTSPreference = (
   settings: TTSSettings,
   language: Language,
-): LanguageTTSPreference => readPreference(settings.preferences?.[language], language);
+): LanguageTTSPreference => readPreference(settings.preferences[language], language);
 
 export const migrateTTSSettings = (
   raw: unknown,
@@ -79,7 +78,6 @@ export const migrateTTSSettings = (
   }
 
   return {
-    voice,
     preferences,
     speed:
       typeof raw.speed === 'number' && Number.isFinite(raw.speed)

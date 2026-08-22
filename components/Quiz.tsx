@@ -1,13 +1,10 @@
-// Last updated: 2025-11-20 17:30
-// Fixed TTS pause/resume logic to match Article.tsx
-// Fixed word click audio issue
-// Inlined AudioControls to fix resume UI glitch
-
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import LoadingSpinner from './icons/LoadingSpinner';
 import { TTSSettings, Language } from '../types';
 import * as ttsService from '../services/ttsService';
-import { segmentText, cleanWord } from '../utils/textProcessing';
+import type { PlaybackSnapshot } from '../services/tts/playbackController';
+import { createSpeechSegments } from '../services/tts/textSegments';
+import SpeakableText from './SpeakableText';
 
 interface QuizProps {
   question: string;
@@ -21,6 +18,7 @@ interface QuizProps {
   hasVocabulary: boolean;
   onPracticeVocabulary: () => void;
   hasCompletedVocabulary: boolean;
+  onFallback: () => void;
 }
 
 const Quiz: React.FC<QuizProps> = ({
@@ -34,248 +32,63 @@ const Quiz: React.FC<QuizProps> = ({
   language,
   hasVocabulary,
   onPracticeVocabulary,
-  hasCompletedVocabulary
+  hasCompletedVocabulary,
+  onFallback,
 }) => {
   const [answer, setAnswer] = useState('');
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
+  const [playback, setPlayback] = useState<PlaybackSnapshot>(() => ttsService.getPlaybackSnapshot());
+  const questionSegments = useMemo(
+    () => createSpeechSegments(question.replace(/[*#_]/g, ''), language, 'quiz-question'),
+    [language, question],
+  );
+  const feedbackSegments = useMemo(
+    () => feedback
+      ? createSpeechSegments(feedback.replace(/[*#_]/g, ''), language, 'quiz-feedback')
+      : [],
+    [feedback, language],
+  );
+  const currentSegments = feedback ? feedbackSegments : questionSegments;
 
-  const questionAutoPlayedRef = useRef(false);
-  const feedbackAutoPlayedRef = useRef(false);
-  const isMounted = useRef(true);
+  useEffect(() => ttsService.subscribeToPlayback(setPlayback), []);
 
-  // Track playback position
-  const playbackIndexRef = useRef(0);
-  const playbackOffsetRef = useRef(0);
-
-  // Reset state when content switches
-  useEffect(() => {
-    playbackIndexRef.current = 0;
-    playbackOffsetRef.current = 0;
-    setIsPlaying(false);
-    setIsPaused(false);
+  useEffect(() => () => {
     ttsService.stopSpeech();
-  }, [question, feedback]);
+  }, [feedback, language, question]);
 
-  // Reset triggered refs when content changes
-  useEffect(() => {
-    questionAutoPlayedRef.current = false;
-  }, [question]);
-
-  useEffect(() => {
-    feedbackAutoPlayedRef.current = false;
-  }, [feedback]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    isMounted.current = true;
-    return () => {
-      console.log('🧹 [Quiz] Unmounting - stopping speech');
-      isMounted.current = false;
-      ttsService.stopSpeech();
-      setIsPlaying(false);
-      setIsPaused(false);
-    };
-  }, []);
-
-  // Handle TTS playback
-  const handlePlay = () => {
-    if (!ttsSettings) return;
-
-    // If already playing and NOT paused, do nothing
-    if (isPlaying && !isPaused) return;
-
-    console.log(`▶️ [Quiz] Play/Resume clicked. Resume index: ${playbackIndexRef.current}`);
-    setIsPlaying(true);
-    setIsPaused(false);
-
-    const rawText = feedback || question;
-
-    // CLEANING: Strip markdown characters for audio
-    // IMPORTANT: This cleaning must be consistent for index tracking
-    const textToClean = rawText
-      .replace(/[*#_]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    // Logic to resume from index
-    const startIndex = playbackIndexRef.current;
-    const textToSpeak = (startIndex > 0 && startIndex < textToClean.length - 5)
-      ? textToClean.substring(startIndex)
-      : textToClean;
-
-    if (startIndex === 0) {
-      playbackOffsetRef.current = 0;
-    } else {
-      playbackOffsetRef.current = startIndex;
-    }
-
-    ttsService.speak(
-      textToSpeak,
-      ttsSettings.voice,
-      ttsSettings.speed,
+  const handlePlay = useCallback(() => {
+    const playableSegments = currentSegments.filter(({ spokenText }) => spokenText.length > 0);
+    if (playableSegments.length === 0) return;
+    void ttsService.speakSegments({
+      segments: playableSegments,
       language,
-      () => {
-        console.log('🎵 [Quiz] Playback ended');
-        if (isMounted.current) {
-          if (isPaused) {
-            console.log('⏸️ [Quiz] Paused - not resetting index');
-            return;
-          }
-
-          // Double check if we are still speaking according to browser
-          if (ttsService.isSpeaking()) {
-            console.warn('⚠️ [Quiz] onEnd fired but still speaking - ignoring');
-            return;
-          }
-          setIsPlaying(false);
-          setIsPaused(false);
-          playbackIndexRef.current = 0;
-          playbackOffsetRef.current = 0;
-        }
-      },
-      (charIndex) => {
-        // Update global index: Offset + current chunk position
-        playbackIndexRef.current = playbackOffsetRef.current + charIndex;
-      }
-    ).catch(error => {
-      console.error('❌ [Quiz] TTS Error:', error);
-      if (isMounted.current) {
-        setIsPlaying(false);
-        setIsPaused(false);
-      }
+      settings: ttsSettings,
+      onFallback,
+    }).catch((error: unknown) => {
+      console.error('TTS playback failed', error);
     });
-  };
+  }, [currentSegments, language, onFallback, ttsSettings]);
 
-  // Auto-play logic for QUESTION
   useEffect(() => {
-    if (!feedback && ttsSettings?.autoRead && !questionAutoPlayedRef.current) {
-      questionAutoPlayedRef.current = true;
-      const timer = setTimeout(() => {
-        if (isMounted.current && !isPlaying) {
-          handlePlay();
-        }
-      }, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [question, feedback, ttsSettings]); // Removed handlePlay dependency
-
-  // Auto-play logic for FEEDBACK
-  useEffect(() => {
-    if (feedback && ttsSettings?.autoRead && !feedbackAutoPlayedRef.current) {
-      feedbackAutoPlayedRef.current = true;
-
-      // Force reset before playing feedback
-      playbackIndexRef.current = 0;
-      playbackOffsetRef.current = 0;
-      setIsPlaying(false);
-      setIsPaused(false);
-      ttsService.stopSpeech();
-
-      const timer = setTimeout(() => {
-        if (isMounted.current) {
-          handlePlay();
-        }
-      }, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [feedback, ttsSettings]); // Removed handlePlay dependency
+    if (!ttsSettings.autoRead || currentSegments.length === 0) return undefined;
+    const timer = window.setTimeout(handlePlay, 800);
+    return () => window.clearTimeout(timer);
+  }, [currentSegments, handlePlay, ttsSettings.autoRead]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (answer.trim()) {
-      // Stop speech on submit
       ttsService.stopSpeech();
-      setIsPlaying(false);
-      setIsPaused(false);
       onAnswerSubmit(answer.trim());
     }
   };
 
-
-
-  const makeWordsClickable = (text: string) => {
-    if (!onWordClick) {
-      return text.replace(/[*#_]/g, '');
-    }
-
-    // Split by markdown bold/italic syntax first to preserve styling
-    // Matches **bold** or *italic*
-    const markdownParts = text.split(/(\*\*.*?\*\*|\*.*?\*)/g);
-
-    return markdownParts.map((part, partIndex) => {
-      let isBold = false;
-      let isItalic = false;
-      let content = part;
-
-      if (part.startsWith('**') && part.endsWith('**')) {
-        isBold = true;
-        content = part.slice(2, -2);
-      } else if (part.startsWith('*') && part.endsWith('*')) {
-        isItalic = true;
-        content = part.slice(1, -1);
-      }
-
-      // Now segment the content of this part (whether styled or not)
-      const segments = segmentText(content, language);
-
-      return (
-        <span key={`part-${partIndex}`}>
-          {segments.map((segment, segIndex) => {
-            const { text: word, isWord } = segment;
-            const cleaned = cleanWord(word);
-
-            return (
-              <span
-                key={`seg-${partIndex}-${segIndex}`}
-                className={`
-                  ${isWord ? "cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded-md transition-colors duration-200 px-1 py-0.5 -mx-1 -my-0.5" : ""}
-                  ${isBold ? "font-bold" : ""}
-                  ${isItalic ? "italic" : ""}
-                `}
-                onClick={(e) => {
-                  if (isWord && onWordClick) {
-                    if (isPlaying) {
-                      ttsService.stopSpeech();
-                      setIsPlaying(false);
-                      setIsPaused(true);
-                    }
-                    onWordClick(cleaned, e);
-                  }
-                }}
-              >
-                {word}
-              </span>
-            );
-          })}
-        </span>
-      );
-    });
-  };
-
-  // Logic identical to Article.tsx
-  const handlePauseResume = () => {
-    if (isPaused) {
-      // Resume: Since we "stopped" to pause, we just restart playback.
-      // handlePlay() will pick up from playbackIndexRef.current.
-      handlePlay();
-    } else {
-      // Pause: We simulate pause by stopping speech but keeping the "Paused" UI state.
-      // This avoids unreliable native browser pause/resume behavior.
-      ttsService.stopSpeech();
-      setIsPlaying(false);
-      setIsPaused(true);
-    }
-  };
-
-  const handleStop = () => {
-    console.log('⏹️ [Quiz] Stop button clicked');
+  const handleWordClick = useCallback((word: string, event: React.MouseEvent<HTMLSpanElement>) => {
     ttsService.stopSpeech();
-    setIsPlaying(false);
-    setIsPaused(false);
-    playbackIndexRef.current = 0;
-    playbackOffsetRef.current = 0;
-  };
+    onWordClick?.(word, event);
+  }, [onWordClick]);
+
+  const isPlaying = playback.status !== 'idle';
+  const isPaused = playback.status === 'paused';
 
   // Render helper for audio controls
   const renderAudioControls = () => (
@@ -284,7 +97,7 @@ const Quiz: React.FC<QuizProps> = ({
         <>
           <button
             type="button"
-            onClick={handlePauseResume}
+            onClick={isPaused ? ttsService.resumeSpeech : ttsService.pauseSpeech}
             className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
             title={isPaused ? "Resume" : "Pause"}
           >
@@ -303,7 +116,7 @@ const Quiz: React.FC<QuizProps> = ({
           </button>
           <button
             type="button"
-            onClick={handleStop}
+            onClick={ttsService.stopSpeech}
             className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
             title="Stop"
           >
@@ -349,7 +162,12 @@ const Quiz: React.FC<QuizProps> = ({
               {renderAudioControls()}
             </div>
             <p className="text-gray-600 dark:text-gray-400 text-lg font-aleo">
-              {makeWordsClickable(question)}
+              <SpeakableText
+                segments={questionSegments}
+                language={language}
+                activeSegmentId={playback.activeSegmentId}
+                onWordClick={onWordClick ? handleWordClick : undefined}
+              />
             </p>
           </div>
 
@@ -388,7 +206,12 @@ const Quiz: React.FC<QuizProps> = ({
           </div>
           <div className="p-6 bg-gray-50 dark:bg-gray-700/50 rounded-lingoblitz border border-gray-200 dark:border-gray-600">
             <p className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-aleo text-lg leading-relaxed">
-              {makeWordsClickable(feedback)}
+              <SpeakableText
+                segments={feedbackSegments}
+                language={language}
+                activeSegmentId={playback.activeSegmentId}
+                onWordClick={onWordClick ? handleWordClick : undefined}
+              />
             </p>
           </div>
 

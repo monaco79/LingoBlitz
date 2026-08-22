@@ -6,10 +6,7 @@ import type {
   PlaybackSnapshot,
 } from './tts/playbackController';
 import type { SpeechSegment, TTSVoiceOption } from './tts/types';
-import {
-  createLegacyBrowserSpeech,
-  createTTSService,
-} from './ttsService';
+import { createTTSService } from './ttsService';
 
 const settings: TTSSettings = {
   preferences: {
@@ -50,15 +47,6 @@ const makeController = () => {
   };
 };
 
-const makeLegacy = () => ({
-  getDefaultVoice: vi.fn(async () => ''),
-  isSpeaking: vi.fn(() => false),
-  pause: vi.fn(),
-  resume: vi.fn(),
-  speak: vi.fn(async () => undefined),
-  stop: vi.fn(),
-});
-
 describe('provider-neutral TTS facade', () => {
   it('segments speakText input and sends only provider-neutral playback fields', async () => {
     const controller = makeController();
@@ -68,7 +56,6 @@ describe('provider-neutral TTS facade', () => {
       browserVoices: vi.fn(async () => []),
       controller,
       createSegments,
-      legacy: makeLegacy(),
       voxtralVoices: vi.fn(async () => []),
     });
 
@@ -87,17 +74,14 @@ describe('provider-neutral TTS facade', () => {
       settings,
       onFallback,
     });
-    expect('onBoundary' in controller.play.mock.calls[0][0]).toBe(false);
   });
 
   it('delegates prepared segments, controls, snapshots, and subscriptions', async () => {
     const controller = makeController();
-    const legacy = makeLegacy();
     const service = createTTSService({
       browserVoices: vi.fn(async () => []),
       controller,
       createSegments: vi.fn(() => []),
-      legacy,
       voxtralVoices: vi.fn(async () => []),
     });
     const request: PlaybackRequest = {
@@ -128,10 +112,6 @@ describe('provider-neutral TTS facade', () => {
     expect(controller.pause).toHaveBeenCalledTimes(1);
     expect(controller.resume).toHaveBeenCalledTimes(1);
     expect(controller.stop).toHaveBeenCalledTimes(1);
-    expect(legacy.pause).toHaveBeenCalledTimes(1);
-    expect(legacy.resume).toHaveBeenCalledTimes(1);
-    expect(legacy.stop).toHaveBeenCalledTimes(1);
-
     unsubscribe();
     controller.setSnapshot({ status: 'idle', activeSegmentId: null, source: null });
     expect(listener).toHaveBeenCalledTimes(1);
@@ -158,19 +138,13 @@ describe('provider-neutral TTS facade', () => {
       browserVoices,
       controller: makeController(),
       createSegments: vi.fn(() => []),
-      legacy: makeLegacy(),
       voxtralVoices,
     });
 
     await expect(service.getVoicesForLanguage(Language.German, 'browser')).resolves.toEqual([browserVoice]);
     await expect(service.getVoicesForLanguage(Language.German, 'voxtral')).resolves.toEqual([voxtralVoice]);
-    await expect(service.getVoicesForLanguage(Language.German)).resolves.toEqual([{
-      ...browserVoice,
-      locale: 'de-DE',
-    }]);
-    expect(browserVoices).toHaveBeenCalledTimes(2);
+    expect(browserVoices).toHaveBeenCalledTimes(1);
     expect(browserVoices).toHaveBeenNthCalledWith(1, Language.German);
-    expect(browserVoices).toHaveBeenNthCalledWith(2, Language.German);
     expect(voxtralVoices).toHaveBeenCalledExactlyOnceWith(Language.German, undefined);
   });
 
@@ -180,7 +154,6 @@ describe('provider-neutral TTS facade', () => {
       browserVoices: vi.fn(async () => []),
       controller: makeController(),
       createSegments: vi.fn(() => []),
-      legacy: makeLegacy(),
       subscribeToBrowserVoices,
       voxtralVoices: vi.fn(async () => []),
     });
@@ -190,44 +163,5 @@ describe('provider-neutral TTS facade', () => {
 
     expect(subscribeToBrowserVoices).toHaveBeenCalledExactlyOnceWith(listener);
     expect(unsubscribe).toEqual(expect.any(Function));
-  });
-});
-
-describe('deprecated positional browser wrapper', () => {
-  it('retains character-boundary and playback-end callbacks until call sites migrate', async () => {
-    const voice = { name: 'Anna', lang: 'de-DE' } as SpeechSynthesisVoice;
-    const utterances: SpeechSynthesisUtterance[] = [];
-    const synthesis = {
-      cancel: vi.fn(),
-      get paused() { return false; },
-      get speaking() { return true; },
-      getVoices: vi.fn(() => [voice]),
-      pause: vi.fn(),
-      resume: vi.fn(),
-      speak: vi.fn((utterance: SpeechSynthesisUtterance) => utterances.push(utterance)),
-    };
-    const legacy = createLegacyBrowserSpeech({
-      createUtterance: (text) => ({ text } as SpeechSynthesisUtterance),
-      speechSynthesis: synthesis,
-    });
-    const onBoundary = vi.fn();
-    const onPlaybackEnd = vi.fn();
-
-    const playback = legacy.speak(
-      'Hallo.',
-      'Anna',
-      0.8,
-      Language.German,
-      onPlaybackEnd,
-      onBoundary,
-    );
-    await vi.waitFor(() => expect(utterances).toHaveLength(1));
-
-    utterances[0].onboundary?.({ charIndex: 3 } as SpeechSynthesisEvent);
-    expect(onBoundary).toHaveBeenCalledExactlyOnceWith(3);
-    utterances[0].onend?.(new Event('end') as SpeechSynthesisEvent);
-
-    await expect(playback).resolves.toBeUndefined();
-    expect(onPlaybackEnd).toHaveBeenCalledTimes(1);
   });
 });

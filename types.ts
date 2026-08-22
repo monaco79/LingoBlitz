@@ -46,9 +46,7 @@ export interface LanguageTTSPreference {
 }
 
 export interface TTSSettings {
-  /** @deprecated Kept temporarily while existing browser TTS call sites migrate. */
-  voice?: string;
-  preferences?: Partial<Record<Language, LanguageTTSPreference>>;
+  preferences: Partial<Record<Language, LanguageTTSPreference>>;
   speed: number;
   autoRead: boolean;
 }
@@ -86,10 +84,4 @@ export interface TranslationPopup {
 export interface VocabularyItem {
   word: string;
   translation: string;
-}
-
-export interface AzureVoice {
-  name: string;
-  displayName: string;
-  locale: string;
 }

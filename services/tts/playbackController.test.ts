@@ -710,7 +710,7 @@ describe('PlaybackController provider fallback', () => {
 
     await playback;
     expect(onFallback).not.toHaveBeenCalled();
-    expect(settings.preferences?.[Language.Japanese]?.provider).toBe('voxtral');
+    expect(settings.preferences[Language.Japanese]?.provider).toBe('voxtral');
   });
 
   it('does not report fallback when replacement or stop aborts Voxtral preparation', async () => {

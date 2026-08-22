@@ -11,7 +11,6 @@ import Onboarding from './Onboarding';
 
 const service = vi.hoisted(() => ({
   getVoicesForLanguage: vi.fn(),
-  speak: vi.fn(async () => undefined),
   speakText: vi.fn(async () => undefined),
   subscribeToVoiceChanges: vi.fn(() => () => undefined),
 }));

@@ -10,9 +10,7 @@ import { Language, Level, Topic, type UserSettings } from '../types';
 import SettingsModal from './SettingsModal';
 
 const service = vi.hoisted(() => ({
-  getDefaultVoice: vi.fn(async () => ''),
   getVoicesForLanguage: vi.fn(),
-  speak: vi.fn(async () => undefined),
   speakText: vi.fn(async () => undefined),
   subscribeToVoiceChanges: vi.fn(() => () => undefined),
 }));
@@ -93,6 +91,6 @@ describe('SettingsModal voice settings integration', () => {
       voxtralVoiceId: 'spanish-one',
       browserVoiceName: 'Monica',
     });
-    expect(getTTSPreference(saved.tts, Language.German)).toEqual(currentSettings.tts.preferences?.[Language.German]);
+    expect(getTTSPreference(saved.tts, Language.German)).toEqual(currentSettings.tts.preferences[Language.German]);
   });
 });

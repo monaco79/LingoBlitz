@@ -42,7 +42,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
   onChangeRef.current = onChange;
 
   const preference = getTTSPreference(value, language);
-  const rawProvider = value.preferences?.[language]?.provider;
+  const rawProvider = value.preferences[language]?.provider;
   const voxtralSupported = isVoxtralSupported(language);
   const activeProvider: TTSProvider = voxtralSupported ? preference.provider : 'browser';
   const selectedVoice = activeProvider === 'voxtral'

@@ -126,7 +126,7 @@ describe('VoiceSettings', () => {
     expect((screen.getByRole('radio', { name: 'Browser' }) as HTMLInputElement).checked).toBe(true);
     await waitFor(() => {
       const persisted = onValue.mock.calls.at(-1)?.[0] as TTSSettings | undefined;
-      expect(persisted?.preferences?.[language]).toEqual({
+      expect(persisted?.preferences[language]).toEqual({
         provider: 'browser',
         voxtralVoiceId: 'unsupported-preset',
         browserVoiceName,
