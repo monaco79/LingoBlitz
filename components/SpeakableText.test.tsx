@@ -27,6 +27,7 @@ describe('SpeakableText', () => {
     const visibleSentences = screen.getAllByTestId('visible-sentence');
 
     expect(visibleSentences[0].getAttribute('data-active-sentence')).not.toBe('true');
+    expect(visibleSentences[0].getAttribute('aria-current')).toBeNull();
     expect(visibleSentences[1].getAttribute('data-active-sentence')).toBe('true');
     expect(visibleSentences[1].getAttribute('aria-current')).toBe('true');
   });

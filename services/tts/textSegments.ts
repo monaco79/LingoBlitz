@@ -76,7 +76,18 @@ const precedingWord = (text: string, index: number): string =>
 
 const isProtectedPeriod = (text: string, index: number): boolean => {
   const word = precedingWord(text, index);
-  return HONORIFICS.has(word) || /\d$/.test(text.slice(0, index));
+  const isDecimalPoint = /\d$/.test(text.slice(0, index)) && /\d/.test(text[index + 1] ?? '');
+  return HONORIFICS.has(word) || isDecimalPoint;
+};
+
+const hasQuotedReportingClause = (text: string, terminalIndex: number): boolean => {
+  let index = terminalIndex + 1;
+  let hasClosingQuote = false;
+  while (index < text.length && SENTENCE_CLOSERS.has(text[index])) {
+    hasClosingQuote = true;
+    index += 1;
+  }
+  return hasClosingQuote && (text[index] === ',' || text[index] === '，');
 };
 
 const fallbackSentenceSegments = (text: string): string[] => {
@@ -87,7 +98,11 @@ const fallbackSentenceSegments = (text: string): string[] => {
     const character = text[index];
     const isTerminal = character === '.' || character === '!' || character === '?' || character === '。' || character === '！' || character === '？';
 
-    if (!isTerminal || (character === '.' && isProtectedPeriod(text, index))) continue;
+    if (
+      !isTerminal
+      || (character === '.' && isProtectedPeriod(text, index))
+      || hasQuotedReportingClause(text, index)
+    ) continue;
 
     let end = index + 1;
     while (end < text.length && (text[end] === '.' || text[end] === '!' || text[end] === '?' || SENTENCE_CLOSERS.has(text[end]))) {
@@ -174,9 +189,16 @@ export const createSpeechSegments = (
   .filter((displayText) => displayText.trim().length > 0)
   .flatMap((displayText, visibleIndex) => {
     const spokenText = normalizeSpeechText(displayText);
-    if (!spokenText) return [];
-
     const visibleSentenceId = `${idPrefix}-${visibleIndex}`;
+    if (!spokenText) {
+      return [{
+        id: `${visibleSentenceId}-0`,
+        displayText,
+        spokenText: '',
+        visibleSentenceId,
+      }];
+    }
+
     return splitOversizedText(spokenText).map((chunk, chunkIndex) => ({
       id: `${visibleSentenceId}-${chunkIndex}`,
       displayText,

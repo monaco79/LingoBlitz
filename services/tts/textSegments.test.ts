@@ -53,8 +53,55 @@ describe('speech text segments', () => {
       ]);
   });
 
+  it('keeps quoted speech and its reporting clause together in the fallback', () => {
+    Object.defineProperty(Intl, 'Segmenter', {
+      configurable: true,
+      value: undefined,
+      writable: true,
+    });
+    const text = '“Hallo!”, sagte Ana.\nWie geht es dir?';
+
+    const segments = createSpeechSegments(text, Language.German, 'quoted-fallback');
+
+    expect(segments.map(({ displayText }) => displayText)).toEqual([
+      '“Hallo!”, sagte Ana.',
+      '\nWie geht es dir?',
+    ]);
+    expect(segments.map(({ displayText }) => displayText).join('')).toBe(text);
+  });
+
+  it('treats a year-ending period as a sentence boundary in the fallback', () => {
+    Object.defineProperty(Intl, 'Segmenter', {
+      configurable: true,
+      value: undefined,
+      writable: true,
+    });
+
+    expect(createSpeechSegments('It happened in 2020. Next sentence.', Language.English, 'year-fallback'))
+      .toMatchObject([
+        { displayText: 'It happened in 2020.' },
+        { displayText: ' Next sentence.' },
+      ]);
+  });
+
   it('normalizes markup, emoji, and repeated whitespace only for speech', () => {
     expect(normalizeSpeechText('**Hallo** 👋  Welt')).toBe('Hallo Welt');
+  });
+
+  it('preserves visible silent text with an empty spoken unit', () => {
+    Object.defineProperty(Intl, 'Segmenter', {
+      configurable: true,
+      value: undefined,
+      writable: true,
+    });
+    const text = 'Hello. 👋';
+    const segments = createSpeechSegments(text, Language.English, 'silent');
+
+    expect(segments).toMatchObject([
+      { id: 'silent-0-0', displayText: 'Hello.', spokenText: 'Hello.' },
+      { id: 'silent-1-0', displayText: ' 👋', spokenText: '' },
+    ]);
+    expect(segments.map(({ displayText }) => displayText).join('')).toBe(text);
   });
 
   it('splits oversized speech into bounded chunks without duplicating its visible sentence', () => {
