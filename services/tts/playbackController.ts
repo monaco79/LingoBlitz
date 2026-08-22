@@ -166,7 +166,7 @@ export class PlaybackController {
 
   resume(): void {
     const operation = this.currentOperation;
-    if (!operation || !operation.pauseRequested || this.snapshot.status !== 'paused') return;
+    if (!operation || !operation.pauseRequested) return;
 
     operation.pauseRequested = false;
     const resumeGate = operation.resumeGate;
@@ -301,7 +301,11 @@ export class PlaybackController {
 
         const nextSegment = operation.segments[operation.currentIndex];
         if (nextSegment && nextSegment.visibleSentenceId !== segment.visibleSentenceId) {
-          this.setSnapshot({ status: 'loading', activeSegmentId: null, source: operation.source });
+          this.setSnapshot({
+            status: operation.pauseRequested ? 'paused' : 'loading',
+            activeSegmentId: null,
+            source: operation.source,
+          });
         }
       }
 
@@ -357,7 +361,9 @@ export class PlaybackController {
       activeSegmentId: null,
       source: 'browser',
     });
+    if (!this.isCurrent(operation)) return true;
     this.ensureLookahead(operation);
+    if (!this.isCurrent(operation)) return true;
 
     if (!operation.fallbackNotified) {
       operation.fallbackNotified = true;
