@@ -1,7 +1,18 @@
 import * as assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { resolveTTSConfig } from './tts-config.ts';
+
+test('documents the server-only Voxtral environment contract', () => {
+  const example = readFileSync(fileURLToPath(new URL('../../.env.example', import.meta.url)), 'utf8');
+
+  assert.match(example, /^TTS_ENABLED=/m);
+  assert.match(example, /^TTS_MODEL=/m);
+  assert.match(example, /^MISTRAL_API_KEY=/m);
+  assert.doesNotMatch(example, /^VITE_MISTRAL_API_KEY=/m);
+});
 
 test('enables Voxtral with its pinned defaults when a Mistral key is present', () => {
   assert.deepEqual(resolveTTSConfig({ MISTRAL_API_KEY: 'key' }), {
