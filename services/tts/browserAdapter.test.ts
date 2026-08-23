@@ -175,4 +175,23 @@ describe('BrowserSpeechAdapter', () => {
       { id: 'Plain local', name: 'Plain local', displayName: 'Plain local (de-DE)', provider: 'browser', languages: ['de-DE'] },
     ]);
   });
+
+  it('retains Natural and cloud as secondary preferences within vendor groups', async () => {
+    const voices = [
+      makeVoice('Microsoft Alpha', 'de-DE', true),
+      makeVoice('Microsoft Zulu Natural', 'de-DE', false),
+      makeVoice('Google Alpha', 'de-DE', true),
+      makeVoice('Google Zulu Natural', 'de-DE', false),
+    ];
+    const { adapter } = createHarness(voices);
+
+    const names = (await adapter.getVoices(Language.German)).map(({ name }) => name);
+
+    expect(names).toEqual([
+      'Microsoft Zulu Natural',
+      'Microsoft Alpha',
+      'Google Zulu Natural',
+      'Google Alpha',
+    ]);
+  });
 });

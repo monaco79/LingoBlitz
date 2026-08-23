@@ -24,17 +24,20 @@ export interface BrowserSpeechAdapterOptions {
   createUtterance?: (text: string) => SpeechSynthesisUtterance;
 }
 
-const voiceQuality = (voice: SpeechSynthesisVoice): number => {
-  const name = voice.name.toLowerCase();
-  if (name.includes('microsoft')) return 0;
-  if (name.includes('google') || name.includes('chrome')) return 1;
-  if (name.includes('natural') || !voice.localService) return 2;
-  return 3;
-};
-
 const sortVoices = (left: SpeechSynthesisVoice, right: SpeechSynthesisVoice): number => {
-  const qualityDifference = voiceQuality(left) - voiceQuality(right);
-  return qualityDifference || left.name.toLowerCase().localeCompare(right.name.toLowerCase());
+  const leftName = left.name.toLowerCase();
+  const rightName = right.name.toLowerCase();
+  const preferences = [
+    [leftName.includes('microsoft'), rightName.includes('microsoft')],
+    [leftName.includes('google') || leftName.includes('chrome'), rightName.includes('google') || rightName.includes('chrome')],
+    [leftName.includes('natural') || !left.localService, rightName.includes('natural') || !right.localService],
+  ];
+
+  for (const [leftPreferred, rightPreferred] of preferences) {
+    if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1;
+  }
+
+  return leftName.localeCompare(rightName);
 };
 
 const createCancelledError = (): TTSAdapterError =>
