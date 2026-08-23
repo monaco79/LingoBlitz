@@ -24,7 +24,9 @@ const renderWords = (
   return (
     <span
       key={`${keyPrefix}-word-${index}`}
-      className={segment.isWord ? 'cursor-pointer' : undefined}
+      className={segment.isWord
+        ? 'cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded-md transition-colors duration-100 px-1 py-0.5 -mx-1 -my-0.5'
+        : undefined}
       onClick={(event) => {
         if (segment.isWord && cleanedWord) onWordClick?.(cleanedWord, event);
       }}

@@ -41,6 +41,18 @@ describe('SpeakableText', () => {
     expect(onWordClick).toHaveBeenCalledWith('hallo', expect.any(Object));
   });
 
+  it('keeps a visible hover affordance and padded hit target on clickable words', () => {
+    render(<SpeakableText segments={segments} language={Language.German} activeSegmentId={null} onWordClick={vi.fn()} />);
+
+    const word = screen.getByText('Hallo');
+
+    expect(word.className).toContain('hover:bg-blue-100');
+    expect(word.className).toContain('px-1');
+    expect(word.className).toContain('py-0.5');
+    expect(word.className).toContain('-mx-1');
+    expect(word.className).toContain('-my-0.5');
+  });
+
   it('renders a visible sentence once when it has multiple internal audio chunks', () => {
     render(
       <SpeakableText
