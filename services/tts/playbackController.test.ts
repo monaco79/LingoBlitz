@@ -28,12 +28,26 @@ const deferred = <T>(): Deferred<T> => {
 
 class ControlledUnit implements PlaybackUnit {
   private readonly completion = deferred<void>();
+  private readonly startLifecycle = deferred<void>();
 
   readonly dispose = vi.fn();
   readonly pause = vi.fn();
-  readonly play = vi.fn(() => this.completion.promise);
+  readonly play = vi.fn(() => {
+    if (this.autoStart) this.startLifecycle.resolve();
+    return this.completion.promise;
+  });
   readonly resume = vi.fn(async () => undefined);
-  readonly stop = vi.fn(() => this.completion.resolve());
+  readonly started = this.startLifecycle.promise;
+  readonly stop = vi.fn(() => {
+    this.startLifecycle.resolve();
+    this.completion.resolve();
+  });
+
+  constructor(private readonly autoStart = true) {}
+
+  start(): void {
+    this.startLifecycle.resolve();
+  }
 
   finish(): void {
     this.completion.resolve();
@@ -83,9 +97,9 @@ class ControlledAdapter implements SpeechAdapter {
     });
   }
 
-  resolve(index: number): ControlledUnit {
+  resolve(index: number, options: { autoStart?: boolean } = {}): ControlledUnit {
     const call = this.calls[index];
-    const unit = new ControlledUnit();
+    const unit = new ControlledUnit(options.autoStart ?? true);
     call.unit = unit;
     call.deferred.resolve(unit);
     return unit;
@@ -230,6 +244,51 @@ describe('PlaybackController queue and state', () => {
     unit.finish();
     await playback;
     expect(snapshots.at(-1)).toEqual({ status: 'idle', activeSegmentId: null, source: null, ownerId: null });
+  });
+
+  it('keeps highlighting clear until the prepared unit reports actual playback start', async () => {
+    const { controller, voxtral } = createHarness();
+    const playback = controller.play({
+      ownerId: 'test-owner',
+      segments: [makeSegment(0)],
+      language: Language.German,
+      settings: makeSettings(),
+    });
+
+    const unit = voxtral.resolve(0, { autoStart: false });
+    await waitFor(() => expect(unit.play).toHaveBeenCalledTimes(1));
+    expect(controller.getSnapshot()).toEqual({
+      status: 'loading',
+      activeSegmentId: null,
+      source: 'voxtral',
+      ownerId: 'test-owner',
+    });
+
+    unit.start();
+    await waitFor(() => expect(controller.getSnapshot().activeSegmentId).toBe('sentence-0'));
+    unit.finish();
+    await playback;
+  });
+
+  it('does not publish a stale highlight when stopped before playback starts', async () => {
+    const { controller, voxtral } = createHarness();
+    const snapshots: PlaybackSnapshot[] = [];
+    controller.subscribe((snapshot) => snapshots.push({ ...snapshot }));
+    const playback = controller.play({
+      ownerId: 'test-owner',
+      segments: [makeSegment(0)],
+      language: Language.German,
+      settings: makeSettings(),
+    });
+
+    const unit = voxtral.resolve(0, { autoStart: false });
+    await waitFor(() => expect(unit.play).toHaveBeenCalledTimes(1));
+    controller.stop();
+    unit.start();
+
+    await playback;
+    expect(controller.getSnapshot()).toEqual({ status: 'idle', activeSegmentId: null, source: null, ownerId: null });
+    expect(snapshots.some(({ activeSegmentId }) => activeSegmentId === 'sentence-0')).toBe(false);
   });
 
   it('does not flicker the highlight between chunks of one visible sentence', async () => {

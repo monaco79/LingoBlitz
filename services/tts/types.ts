@@ -8,6 +8,7 @@ export interface SpeechSegment {
 }
 
 export interface PlaybackUnit {
+  readonly started: Promise<void>;
   play(): Promise<void>;
   pause(): void;
   resume(): Promise<void>;

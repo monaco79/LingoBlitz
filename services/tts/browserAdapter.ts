@@ -88,6 +88,7 @@ export class BrowserSpeechAdapter implements SpeechAdapter {
 
     if (!segment.spokenText) {
       return {
+        started: Promise.resolve(),
         play: async () => undefined,
         pause: () => undefined,
         resume: async () => undefined,
@@ -107,8 +108,22 @@ export class BrowserSpeechAdapter implements SpeechAdapter {
     let playback: Promise<void> | null = null;
     let resolvePlayback: (() => void) | null = null;
     let rejectPlayback: ((error: Error) => void) | null = null;
+    let resolveStarted!: () => void;
+    let rejectStarted!: (error: Error) => void;
+    let startedSettled = false;
     let stopped = false;
     let disposed = false;
+    const started = new Promise<void>((resolve, reject) => {
+      resolveStarted = resolve;
+      rejectStarted = reject;
+    });
+    void started.catch(() => undefined);
+
+    const settleStarted = (error?: Error) => {
+      if (startedSettled) return;
+      startedSettled = true;
+      error ? rejectStarted(error) : resolveStarted();
+    };
 
     const settle = (error?: Error) => {
       if (!resolvePlayback) return;
@@ -123,6 +138,7 @@ export class BrowserSpeechAdapter implements SpeechAdapter {
       if (stopped) return;
       stopped = true;
       this.synthesis.cancel();
+      settleStarted();
       settle();
     };
 
@@ -130,6 +146,7 @@ export class BrowserSpeechAdapter implements SpeechAdapter {
     signal.addEventListener('abort', onAbort, { once: true });
 
     return {
+      started,
       play: () => {
         if (playback) return playback;
         if (stopped || signal.aborted) return Promise.resolve();
@@ -137,9 +154,28 @@ export class BrowserSpeechAdapter implements SpeechAdapter {
         playback = new Promise<void>((resolve, reject) => {
           resolvePlayback = resolve;
           rejectPlayback = reject;
-          utterance.onend = () => settle();
-          utterance.onerror = () => settle(new TTSAdapterError('upstream', 'Browser speech playback failed'));
-          this.synthesis.speak(utterance);
+          utterance.onstart = () => settleStarted();
+          utterance.onend = () => {
+            if (!startedSettled) {
+              const error = new TTSAdapterError('upstream', 'Browser speech playback failed');
+              settleStarted(error);
+              settle(error);
+              return;
+            }
+            settle();
+          };
+          utterance.onerror = () => {
+            const error = new TTSAdapterError('upstream', 'Browser speech playback failed');
+            settleStarted(error);
+            settle(error);
+          };
+          try {
+            this.synthesis.speak(utterance);
+          } catch {
+            const error = new TTSAdapterError('upstream', 'Browser speech playback failed');
+            settleStarted(error);
+            settle(error);
+          }
         });
         return playback;
       },
@@ -154,8 +190,10 @@ export class BrowserSpeechAdapter implements SpeechAdapter {
         if (disposed) return;
         disposed = true;
         signal.removeEventListener('abort', onAbort);
+        utterance.onstart = null;
         utterance.onend = null;
         utterance.onerror = null;
+        settleStarted();
         settle();
       },
     };

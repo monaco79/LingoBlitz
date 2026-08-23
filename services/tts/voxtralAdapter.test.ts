@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Language } from '../../types';
 import { AudioCache } from './audioCache';
-import { TTSAdapterError, type AdapterContext, type SpeechSegment } from './types';
+import { TTSAdapterError, type AdapterContext, type PlaybackUnit, type SpeechSegment } from './types';
 import { VoxtralSpeechAdapter } from './voxtralAdapter';
 
 const segment: SpeechSegment = {
@@ -106,8 +106,27 @@ describe('VoxtralSpeechAdapter', () => {
     expect(audio.playbackRate).toBe(0.8);
     expect(audio.play).toHaveBeenCalledTimes(1);
 
+    audio.dispatchEvent(new Event('playing'));
     audio.dispatchEvent(new Event('ended'));
     await expect(playback).resolves.toBeUndefined();
+  });
+
+  it('reports start only after the media playing event, not play promise fulfillment', async () => {
+    const { adapter, audios } = createHarness();
+    const unit = await adapter.prepare(segment, context, new AbortController().signal);
+    const started = (unit as PlaybackUnit & { started: Promise<void> }).started;
+    let didStart = false;
+    void started?.then(() => { didStart = true; });
+
+    const playback = unit.play();
+    await Promise.resolve();
+    expect(started).toBeInstanceOf(Promise);
+    expect(didStart).toBe(false);
+
+    audios[0].dispatchEvent(new Event('playing'));
+    await expect(started).resolves.toBeUndefined();
+    audios[0].dispatchEvent(new Event('ended'));
+    await playback;
   });
 
   it('supports pause, resume, and stop while settling playback', async () => {

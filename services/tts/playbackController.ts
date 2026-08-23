@@ -288,13 +288,28 @@ export class PlaybackController {
           if (this.tryFallback(operation, error)) continue;
           throw error;
         }
+        void playback.catch(() => undefined);
+        try {
+          await result.unit.started;
+        } catch (error) {
+          if (this.tryFallback(operation, error)) continue;
+          throw error;
+        }
+        if (!this.isCurrent(operation)) break;
         operation.currentUnitStarted = true;
         this.setSnapshot({
-          status: 'playing',
+          status: operation.pauseRequested ? 'paused' : 'playing',
           activeSegmentId: segment.visibleSentenceId,
           source: operation.source,
           ownerId: operation.request.ownerId,
         });
+        if (operation.pauseRequested) {
+          result.unit.pause();
+          const resumeGate = operation.resumeGate ?? createDeferred();
+          operation.resumeGate = resumeGate;
+          await resumeGate.promise;
+          if (!this.isCurrent(operation)) break;
+        }
         try {
           await playback;
         } catch (error) {

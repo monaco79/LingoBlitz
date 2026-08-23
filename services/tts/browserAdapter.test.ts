@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Language } from '../../types';
 import { BrowserSpeechAdapter } from './browserAdapter';
-import { TTSAdapterError, type AdapterContext, type SpeechSegment } from './types';
+import { TTSAdapterError, type AdapterContext, type PlaybackUnit, type SpeechSegment } from './types';
 
 const segment: SpeechSegment = {
   id: 'segment-1',
@@ -23,6 +23,7 @@ class FakeUtterance {
   onboundary: ((event: unknown) => void) | null = null;
   onend: (() => void) | null = null;
   onerror: ((event: { error: string }) => void) | null = null;
+  onstart: (() => void) | null = null;
   pitch = 1;
   rate = 1;
   volume = 1;
@@ -114,8 +115,27 @@ describe('BrowserSpeechAdapter', () => {
     await Promise.resolve();
     expect(settled).toBe(false);
 
+    utterance.onstart?.();
     utterance.onend?.();
     await expect(playback).resolves.toBeUndefined();
+  });
+
+  it('reports start only when speech synthesis fires onstart', async () => {
+    const { adapter, utterances } = createHarness();
+    const unit = await adapter.prepare(segment, context, new AbortController().signal);
+    const started = (unit as PlaybackUnit & { started: Promise<void> }).started;
+    let didStart = false;
+    void started?.then(() => { didStart = true; });
+
+    const playback = unit.play();
+    await Promise.resolve();
+    expect(started).toBeInstanceOf(Promise);
+    expect(didStart).toBe(false);
+
+    utterances[0].onstart?.();
+    await expect(started).resolves.toBeUndefined();
+    utterances[0].onend?.();
+    await playback;
   });
 
   it('rejects a real synthesis error with a provider-safe adapter error', async () => {

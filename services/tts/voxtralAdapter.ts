@@ -26,6 +26,7 @@ export interface VoxtralSpeechAdapterOptions {
 }
 
 const silentUnit = (): PlaybackUnit => ({
+  started: Promise.resolve(),
   play: async () => undefined,
   pause: () => undefined,
   resume: async () => undefined,
@@ -106,8 +107,22 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
     let playback: Promise<void> | null = null;
     let resolvePlayback: (() => void) | null = null;
     let rejectPlayback: ((error: Error) => void) | null = null;
+    let resolveStarted!: () => void;
+    let rejectStarted!: (error: Error) => void;
+    let startedSettled = false;
     let stopped = false;
     let disposed = false;
+    const started = new Promise<void>((resolve, reject) => {
+      resolveStarted = resolve;
+      rejectStarted = reject;
+    });
+    void started.catch(() => undefined);
+
+    const settleStarted = (error?: Error) => {
+      if (startedSettled) return;
+      startedSettled = true;
+      error ? rejectStarted(error) : resolveStarted();
+    };
 
     const settle = (error?: Error) => {
       if (!resolvePlayback) return;
@@ -117,8 +132,23 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
       rejectPlayback = null;
       error ? reject?.(error) : resolve();
     };
-    const onEnded = () => settle();
-    const onError = () => settle(invalidAudioError());
+    const onPlaying = () => {
+      if (!stopped) settleStarted();
+    };
+    const onEnded = () => {
+      if (!startedSettled) {
+        const error = invalidAudioError();
+        settleStarted(error);
+        settle(error);
+        return;
+      }
+      settle();
+    };
+    const onError = () => {
+      const error = invalidAudioError();
+      settleStarted(error);
+      settle(error);
+    };
     const halt = () => {
       audio.pause();
       audio.currentTime = 0;
@@ -127,14 +157,17 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
       if (stopped) return;
       stopped = true;
       halt();
+      settleStarted();
       settle(cancelledError());
     };
 
+    audio.addEventListener('playing', onPlaying);
     audio.addEventListener('ended', onEnded);
     audio.addEventListener('error', onError);
     signal.addEventListener('abort', onAbort, { once: true });
 
     return {
+      started,
       play: () => {
         if (playback) return playback;
         if (signal.aborted) return Promise.reject(cancelledError());
@@ -144,9 +177,15 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
           resolvePlayback = resolve;
           rejectPlayback = reject;
           try {
-            void Promise.resolve(audio.play()).catch(() => settle(invalidAudioError()));
+            void Promise.resolve(audio.play()).catch(() => {
+              const error = invalidAudioError();
+              settleStarted(error);
+              settle(error);
+            });
           } catch {
-            settle(invalidAudioError());
+            const error = invalidAudioError();
+            settleStarted(error);
+            settle(error);
           }
         });
         return playback;
@@ -160,6 +199,7 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
           await audio.play();
         } catch {
           const error = invalidAudioError();
+          settleStarted(error);
           settle(error);
           throw error;
         }
@@ -168,14 +208,17 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
         if (stopped) return;
         stopped = true;
         halt();
+        settleStarted();
         settle();
       },
       dispose: () => {
         if (disposed) return;
         disposed = true;
+        audio.removeEventListener('playing', onPlaying);
         audio.removeEventListener('ended', onEnded);
         audio.removeEventListener('error', onError);
         signal.removeEventListener('abort', onAbort);
+        settleStarted();
         settle();
         if (!cacheOwned) this.revokeObjectURL(sourceUrl);
       },
