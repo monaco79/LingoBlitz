@@ -218,6 +218,48 @@ describe('Quiz sentence playback', () => {
     ]);
   });
 
+  it.each([
+    {
+      feedback: 'Vorher. **Richtig!** Das passt.',
+      emphasizedText: 'Richtig!',
+      clickedWord: 'richtig',
+      tagName: 'strong',
+      visibleText: ['Vorher.', ' Richtig!', ' Das passt.'],
+      spokenText: ['Vorher.', 'Richtig!', 'Das passt.'],
+    },
+    {
+      feedback: 'Vorher. *Wirklich?* Danach.',
+      emphasizedText: 'Wirklich?',
+      clickedWord: 'wirklich',
+      tagName: 'em',
+      visibleText: ['Vorher.', ' Wirklich?', ' Danach.'],
+      spokenText: ['Vorher.', 'Wirklich?', 'Danach.'],
+    },
+  ])('renders a complete $tagName token after an earlier sentence and speaks it without markers', ({
+    feedback,
+    emphasizedText,
+    clickedWord,
+    tagName,
+    visibleText,
+    spokenText,
+  }) => {
+    const onWordClick = vi.fn();
+    renderQuiz({ feedback, onWordClick });
+
+    const visibleSentences = screen.getAllByTestId('visible-sentence');
+    expect(visibleSentences.map(({ textContent }) => textContent)).toEqual(visibleText);
+    expect(visibleSentences[1].querySelector(tagName)?.textContent).toBe(emphasizedText);
+    expect(visibleSentences.map(({ textContent }) => textContent).join('')).not.toContain('*');
+
+    fireEvent.click(screen.getByText(emphasizedText.slice(0, -1)));
+    expect(onWordClick).toHaveBeenCalledWith(clickedWord, expect.anything());
+
+    fireEvent.click(screen.getByTitle('Play'));
+    const request = tts.speakSegments.mock.calls[0][0];
+    expect(request.segments.map((segment) => segment.spokenText)).toEqual(spokenText);
+    expect(request.segments.map((segment) => segment.displayText).join('')).toBe(feedback);
+  });
+
   it('stops playback when speech content changes and when unmounted', () => {
     const { props, rerender, unmount } = renderQuiz();
     tts.stopSpeech.mockClear();

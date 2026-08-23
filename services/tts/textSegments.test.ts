@@ -131,6 +131,53 @@ describe('speech text segments', () => {
     expect(segments.map(({ displayText }) => displayText).join('')).toBe(text);
   });
 
+  it.each([
+    {
+      label: 'bold',
+      text: 'Vorher. **Richtig!** Das passt.',
+      expected: [
+        { displayText: 'Vorher.', spokenText: 'Vorher.' },
+        { displayText: ' **Richtig!**', spokenText: 'Richtig!' },
+        { displayText: ' Das passt.', spokenText: 'Das passt.' },
+      ],
+    },
+    {
+      label: 'italic',
+      text: 'Vorher. *Wirklich?* Danach.',
+      expected: [
+        { displayText: 'Vorher.', spokenText: 'Vorher.' },
+        { displayText: ' *Wirklich?*', spokenText: 'Wirklich?' },
+        { displayText: ' Danach.', spokenText: 'Danach.' },
+      ],
+    },
+  ])('keeps a complete $label Markdown token with the sentence after an earlier sentence', ({
+    text,
+    expected,
+  }) => {
+    const segments = createSpeechSegments(text, Language.German, 'feedback');
+
+    expect(segments).toMatchObject(expected.map((segment, index) => ({
+      id: `feedback-${index}-0`,
+      visibleSentenceId: `feedback-${index}`,
+      ...segment,
+    })));
+    expect(segments.map(({ displayText }) => displayText).join('')).toBe(text);
+  });
+
+  it('keeps multiple Markdown spans balanced among normally punctuated sentences', () => {
+    const text = 'Start. **Ja!** Normal? *Wirklich?* Ende.';
+    const segments = createSpeechSegments(text, Language.German, 'mixed');
+
+    expect(segments).toMatchObject([
+      { displayText: 'Start.', spokenText: 'Start.' },
+      { displayText: ' **Ja!**', spokenText: 'Ja!' },
+      { displayText: ' Normal?', spokenText: 'Normal?' },
+      { displayText: ' *Wirklich?*', spokenText: 'Wirklich?' },
+      { displayText: ' Ende.', spokenText: 'Ende.' },
+    ]);
+    expect(segments.map(({ displayText }) => displayText).join('')).toBe(text);
+  });
+
   it('preserves visible silent text with an empty spoken unit', () => {
     Object.defineProperty(Intl, 'Segmenter', {
       configurable: true,

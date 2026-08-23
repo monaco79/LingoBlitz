@@ -4,9 +4,13 @@ import type { SpeechSegment } from './types';
 
 const MAX_SPEECH_CHARACTERS = 2_000;
 const MAX_SPEECH_WORDS = 250;
-const MARKDOWN_SENTENCE_MASK = '\u2060';
+// Word-like openings stay with their content; closing joiners stay with terminal punctuation.
+// Both masks are one UTF-16 code unit so the original display slices keep exact offsets.
+const MARKDOWN_OPENING_MASK = 'M';
+const MARKDOWN_CLOSING_MASK = '\u2060';
+const MARKDOWN_EMPHASIS_PATTERN = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
 const SENTENCE_CLOSERS = new Set([
-  '"', "'", '”', '’', '»', '）', ')', ']', '}', MARKDOWN_SENTENCE_MASK,
+  '"', "'", '”', '’', '»', '）', ')', ']', '}', MARKDOWN_CLOSING_MASK,
 ]);
 const TERMINAL_PUNCTUATION = new Set(['.', '!', '?', '…', '。', '！', '？']);
 const HONORIFICS = new Set([
@@ -123,8 +127,25 @@ const fallbackSentenceSegments = (text: string): string[] => {
   return attachWhitespaceSegments(segments);
 };
 
+const maskMarkdownEmphasis = (text: string): string => {
+  const maskedText = text.split('');
+
+  for (const match of text.matchAll(MARKDOWN_EMPHASIS_PATTERN)) {
+    if (match.index === undefined) continue;
+    const delimiterLength = match[0].startsWith('**') ? 2 : 1;
+    const closingStart = match.index + match[0].length - delimiterLength;
+
+    for (let offset = 0; offset < delimiterLength; offset += 1) {
+      maskedText[match.index + offset] = MARKDOWN_OPENING_MASK;
+      maskedText[closingStart + offset] = MARKDOWN_CLOSING_MASK;
+    }
+  }
+
+  return maskedText.join('');
+};
+
 const visibleSentenceSegments = (text: string, language: Language): string[] => {
-  const segmentationText = text.replace(/\*/g, MARKDOWN_SENTENCE_MASK);
+  const segmentationText = maskMarkdownEmphasis(text);
   const Segmenter = (Intl as typeof Intl & { Segmenter?: SentenceSegmenterConstructor }).Segmenter;
   let maskedSegments: string[];
 
