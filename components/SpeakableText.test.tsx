@@ -53,6 +53,18 @@ describe('SpeakableText', () => {
     expect(word.className).toContain('-my-0.5');
   });
 
+  it('renders words without a click affordance when no click handler is provided', () => {
+    render(<SpeakableText segments={segments} language={Language.German} activeSegmentId={null} />);
+
+    const word = screen.getByText('Hallo');
+
+    expect(word.classList.contains('cursor-pointer')).toBe(false);
+    expect(word.classList.contains('hover:bg-blue-100')).toBe(false);
+    expect(word.classList.contains('px-1')).toBe(false);
+    expect(word.classList.contains('py-0.5')).toBe(false);
+    expect(word.onclick).toBeNull();
+  });
+
   it('renders a visible sentence once when it has multiple internal audio chunks', () => {
     render(
       <SpeakableText

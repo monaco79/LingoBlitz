@@ -20,16 +20,17 @@ const renderWords = (
   onWordClick?: (word: string, event: React.MouseEvent<HTMLSpanElement>) => void,
 ) => segmentText(text, language).map((segment, index) => {
   const cleanedWord = cleanWord(segment.text);
+  const isClickable = segment.isWord && Boolean(onWordClick);
 
   return (
     <span
       key={`${keyPrefix}-word-${index}`}
-      className={segment.isWord
+      className={isClickable
         ? 'cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded-md transition-colors duration-100 px-1 py-0.5 -mx-1 -my-0.5'
         : undefined}
-      onClick={(event) => {
-        if (segment.isWord && cleanedWord) onWordClick?.(cleanedWord, event);
-      }}
+      onClick={isClickable ? (event) => {
+        if (cleanedWord) onWordClick?.(cleanedWord, event);
+      } : undefined}
     >
       {segment.text}
     </span>
