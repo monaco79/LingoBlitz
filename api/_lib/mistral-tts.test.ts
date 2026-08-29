@@ -56,6 +56,89 @@ test('caches the complete preset voice list for fifteen minutes', async () => {
   }
 });
 
+test('promise-coalesces concurrent cold preset voice fills', async () => {
+  resetPresetVoicesCacheForTests();
+  let upstreamCalls = 0;
+  let resolveResponse!: (response: Response) => void;
+  const responsePromise = new Promise<Response>((resolve) => {
+    resolveResponse = resolve;
+  });
+  const fetchImpl = (async () => {
+    upstreamCalls += 1;
+    return responsePromise;
+  }) as typeof fetch;
+
+  try {
+    const first = getCachedPresetVoices(config, fetchImpl, 1_000);
+    const second = getCachedPresetVoices(config, fetchImpl, 1_000);
+    assert.equal(upstreamCalls, 1);
+    resolveResponse(Response.json({ data: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }] }));
+    assert.deepEqual(await first, [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }]);
+    assert.deepEqual(await second, await first);
+  } finally {
+    resetPresetVoicesCacheForTests();
+  }
+});
+
+test('classifies an external abort before preset validation without calling upstream', async () => {
+  const controller = new AbortController();
+  let upstreamCalls = 0;
+  const fetchImpl = (async () => {
+    upstreamCalls += 1;
+    return Response.json({ data: [] });
+  }) as typeof fetch;
+  controller.abort();
+
+  await assert.rejects(
+    listPresetVoices(config, fetchImpl, controller.signal),
+    (error: unknown) => error instanceof TTSError && error.category === 'cancelled' && error.status === 499,
+  );
+  assert.equal(upstreamCalls, 0);
+});
+
+test('propagates and safely classifies external aborts during preset validation', async () => {
+  const controller = new AbortController();
+  let upstreamSignal: AbortSignal | undefined;
+  const validation = listPresetVoices(config, (async (_input, init) => {
+    upstreamSignal = init?.signal as AbortSignal;
+    return new Promise<Response>((_resolve, reject) => {
+      upstreamSignal?.addEventListener('abort', () => reject(new DOMException('private provider body', 'AbortError')));
+      setTimeout(() => reject(new DOMException('safety timeout', 'AbortError')), 0);
+    });
+  }) as typeof fetch, controller.signal);
+
+  controller.abort();
+
+  await assert.rejects(
+    validation,
+    (error: unknown) => error instanceof TTSError
+      && error.category === 'cancelled'
+      && error.status === 499
+      && !error.message.includes('private provider body'),
+  );
+  assert.equal(upstreamSignal?.aborted, true);
+});
+
+test('propagates and safely classifies external aborts during speech generation', async () => {
+  const controller = new AbortController();
+  let upstreamSignal: AbortSignal | undefined;
+  const generation = generateSpeech(config, { text: 'Hello', voiceId: 'voice-1' }, (async (_input, init) => {
+    upstreamSignal = init?.signal as AbortSignal;
+    return new Promise<Response>((_resolve, reject) => {
+      upstreamSignal?.addEventListener('abort', () => reject(new DOMException('private provider body', 'AbortError')));
+      setTimeout(() => reject(new DOMException('safety timeout', 'AbortError')), 0);
+    });
+  }) as typeof fetch, controller.signal);
+
+  controller.abort();
+
+  await assert.rejects(
+    generation,
+    (error: unknown) => error instanceof TTSError && error.category === 'cancelled' && error.status === 499,
+  );
+  assert.equal(upstreamSignal?.aborted, true);
+});
+
 test('generates MP3 speech and decodes the returned Base64 audio', async () => {
   let request: { input: RequestInfo | URL; init?: RequestInit } | undefined;
   const audio = await generateSpeech(config, { text: 'Hello', voiceId: 'voice-1' }, (async (input, init) => {

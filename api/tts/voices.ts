@@ -1,4 +1,4 @@
-import { getCachedPresetVoices, listPresetVoices, TTSError, type MistralVoice } from '../_lib/mistral-tts.ts';
+import { getCachedPresetVoices, TTSError, type MistralVoice } from '../_lib/mistral-tts.ts';
 import { resolveTTSConfig, type TTSConfig } from '../_lib/tts-config.ts';
 import { toMistralLanguageCode } from '../../services/tts/languageConfig.ts';
 import type { Language } from '../../types.ts';

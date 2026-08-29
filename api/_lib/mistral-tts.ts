@@ -11,6 +11,7 @@ export interface MistralVoice {
 export type TTSErrorCategory =
   | 'disabled'
   | 'configuration'
+  | 'cancelled'
   | 'timeout'
   | 'rate_limit'
   | 'moderation'
@@ -21,9 +22,19 @@ const PRESET_VOICE_CACHE_TTL_MS = 15 * 60 * 1_000;
 
 let presetVoicesCache: { voices: MistralVoice[]; expiresAt: number } | null = null;
 
+interface PendingPresetVoices {
+  controller: AbortController;
+  consumers: number;
+  settled: boolean;
+  promise: Promise<MistralVoice[]>;
+}
+
+let pendingPresetVoices: PendingPresetVoices | null = null;
+
 const ERROR_MESSAGES: Record<TTSErrorCategory, string> = {
   disabled: 'Mistral TTS is disabled',
   configuration: 'Mistral TTS configuration is invalid',
+  cancelled: 'Mistral TTS request was cancelled',
   timeout: 'Mistral TTS request timed out',
   rate_limit: 'Mistral TTS rate limit',
   moderation: 'Mistral TTS request was rejected',
@@ -78,12 +89,27 @@ async function requestJson(
   path: string,
   init: RequestInit,
   fetchImpl: typeof fetch | undefined,
+  externalSignal?: AbortSignal,
 ): Promise<unknown> {
+  if (externalSignal?.aborted) {
+    throw new TTSError('cancelled', 499);
+  }
+
   const apiKey = assertConfig(config);
   const controller = new AbortController();
+  let externallyAborted = false;
+  const cancel = () => {
+    externallyAborted = true;
+    controller.abort();
+  };
+  externalSignal?.addEventListener('abort', cancel, { once: true });
   const timeout = setTimeout(() => controller.abort(), 20_000);
   const headers = new Headers(init.headers);
   headers.set('authorization', `Bearer ${apiKey}`);
+
+  const abortError = () => externallyAborted || externalSignal?.aborted
+    ? new TTSError('cancelled', 499)
+    : new TTSError('timeout', 504);
 
   try {
     let response: Response;
@@ -95,7 +121,7 @@ async function requestJson(
       });
     } catch (error) {
       if (isAbortError(error) || controller.signal.aborted) {
-        throw new TTSError('timeout', 504);
+        throw abortError();
       }
 
       throw new TTSError('upstream', 502);
@@ -105,17 +131,29 @@ async function requestJson(
       throw errorForStatus(response.status);
     }
 
+    if (controller.signal.aborted) {
+      throw abortError();
+    }
+
     try {
-      return await response.json();
+      const payload = await response.json();
+      if (controller.signal.aborted) {
+        throw abortError();
+      }
+      return payload;
     } catch (error) {
+      if (error instanceof TTSError) {
+        throw error;
+      }
       if (isAbortError(error) || controller.signal.aborted) {
-        throw new TTSError('timeout', 504);
+        throw abortError();
       }
 
       throw new TTSError('invalid_response', 502);
     }
   } finally {
     clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', cancel);
   }
 }
 
@@ -176,34 +214,113 @@ function parseVoices(payload: unknown): MistralVoice[] {
 export async function listPresetVoices(
   config: TTSConfig,
   fetchImpl?: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<MistralVoice[]> {
-  const payload = await requestJson(config, '/audio/voices?type=preset&limit=1000', { method: 'GET' }, fetchImpl);
+  const payload = await requestJson(
+    config,
+    '/audio/voices?type=preset&limit=1000',
+    { method: 'GET' },
+    fetchImpl,
+    signal,
+  );
   return parseVoices(payload);
+}
+
+function consumePendingVoices(
+  pending: PendingPresetVoices,
+  signal?: AbortSignal,
+): Promise<MistralVoice[]> {
+  pending.consumers += 1;
+
+  return new Promise<MistralVoice[]>((resolve, reject) => {
+    let finished = false;
+
+    const release = () => {
+      if (finished) return;
+      finished = true;
+      signal?.removeEventListener('abort', cancel);
+      pending.consumers -= 1;
+      if (!pending.settled && pending.consumers === 0) {
+        pending.controller.abort();
+      }
+    };
+    const cancel = () => {
+      release();
+      reject(new TTSError('cancelled', 499));
+    };
+
+    if (signal?.aborted) {
+      cancel();
+      return;
+    }
+
+    signal?.addEventListener('abort', cancel, { once: true });
+    pending.promise.then(
+      (voices) => {
+        if (finished) return;
+        release();
+        resolve(voices);
+      },
+      (error: unknown) => {
+        if (finished) return;
+        release();
+        reject(error);
+      },
+    );
+  });
 }
 
 export async function getCachedPresetVoices(
   config: TTSConfig,
   fetchImpl?: typeof fetch,
   now = Date.now(),
+  signal?: AbortSignal,
 ): Promise<MistralVoice[]> {
+  if (signal?.aborted) {
+    throw new TTSError('cancelled', 499);
+  }
+
   if (presetVoicesCache && presetVoicesCache.expiresAt > now) {
     return presetVoicesCache.voices;
   }
 
-  const voices = await listPresetVoices(config, fetchImpl);
-  presetVoicesCache = { voices, expiresAt: now + PRESET_VOICE_CACHE_TTL_MS };
-  return voices;
+  if (!pendingPresetVoices) {
+    const pending: PendingPresetVoices = {
+      controller: new AbortController(),
+      consumers: 0,
+      settled: false,
+      promise: Promise.resolve([] as MistralVoice[]),
+    };
+
+    pending.promise = listPresetVoices(config, fetchImpl, pending.controller.signal)
+      .then((voices) => {
+        presetVoicesCache = { voices, expiresAt: now + PRESET_VOICE_CACHE_TTL_MS };
+        return voices;
+      })
+      .finally(() => {
+        pending.settled = true;
+        if (pendingPresetVoices === pending) {
+          pendingPresetVoices = null;
+        }
+      });
+    pendingPresetVoices = pending;
+  }
+
+  return consumePendingVoices(pendingPresetVoices, signal);
 }
 
 /** Test-only cache cleanup for isolated module-level cache assertions. */
 export function resetPresetVoicesCacheForTests(): void {
   presetVoicesCache = null;
+  pendingPresetVoices?.controller.abort();
+  pendingPresetVoices = null;
 }
 
 export async function generateSpeech(
   config: TTSConfig,
   input: { text: string; voiceId: string },
   fetchImpl?: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   const payload = await requestJson(config, '/audio/speech', {
     method: 'POST',
@@ -215,7 +332,7 @@ export async function generateSpeech(
       response_format: 'mp3',
       stream: false,
     }),
-  }, fetchImpl);
+  }, fetchImpl, signal);
 
   if (!payload || typeof payload !== 'object' || typeof (payload as { audio_data?: unknown }).audio_data !== 'string') {
     throw new TTSError('invalid_response', 502);
