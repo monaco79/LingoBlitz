@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { createVoicesHandler } from './voices.ts';
-import type { MistralVoice } from '../_lib/mistral-tts.ts';
+import { TTSError, type MistralVoice } from '../_lib/mistral-tts.ts';
 import type { TTSConfig } from '../_lib/tts-config.ts';
 
 const enabledConfig: TTSConfig = {
@@ -67,4 +67,29 @@ test('reports unavailable TTS when it is disabled', async () => {
   assert.deepEqual(await response.json(), {
     error: { code: 'tts_unavailable', message: 'Text-to-speech is unavailable' },
   });
+});
+
+test('logs safe upstream diagnostics without exposing secrets', async () => {
+  const messages: unknown[] = [];
+  const handler = createVoicesHandler({
+    resolveConfig: () => enabledConfig,
+    listPresetVoices: async () => {
+      throw new TTSError('upstream', 404);
+    },
+    log: (entry) => { messages.push(entry); },
+  });
+
+  const response = await handler(new Request(
+    'https://example.test/api/tts/voices?language=German',
+  ));
+
+  assert.equal(response.status, 502);
+  assert.deepEqual(messages, [{
+    provider: 'mistral',
+    endpoint: 'voices',
+    statusCategory: 'upstream',
+    upstreamStatus: 404,
+    language: 'de',
+  }]);
+  assert.equal(JSON.stringify(messages).includes(enabledConfig.apiKey!), false);
 });

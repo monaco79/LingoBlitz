@@ -7,10 +7,19 @@ export const config = { runtime: 'edge' };
 
 type VoiceReader = (config: TTSConfig) => Promise<MistralVoice[]>;
 
+export interface VoicesTelemetryEntry {
+  provider: 'mistral';
+  endpoint: 'voices';
+  statusCategory: string;
+  upstreamStatus: number | null;
+  language: string | null;
+}
+
 export interface VoicesHandlerDependencies {
   resolveConfig?: () => TTSConfig;
   getCachedPresetVoices?: VoiceReader;
   listPresetVoices?: VoiceReader;
+  log?: (entry: VoicesTelemetryEntry) => void;
 }
 
 function json(payload: unknown, status = 200): Response {
@@ -19,6 +28,10 @@ function json(payload: unknown, status = 200): Response {
 
 function errorResponse(status: number, code: string, message: string): Response {
   return json({ error: { code, message } }, status);
+}
+
+function defaultLog(entry: VoicesTelemetryEntry): void {
+  console.info(JSON.stringify(entry));
 }
 
 function ttsErrorResponse(error: TTSError): Response {
@@ -42,6 +55,7 @@ export function createVoicesHandler(dependencies: VoicesHandlerDependencies = {}
   const readVoices = dependencies.getCachedPresetVoices
     ?? dependencies.listPresetVoices
     ?? getCachedPresetVoices;
+  const log = dependencies.log ?? defaultLog;
 
   return async function handler(request: Request): Promise<Response> {
     if (request.method !== 'GET') {
@@ -74,6 +88,18 @@ export function createVoicesHandler(dependencies: VoicesHandlerDependencies = {}
 
       return json({ voices: compatibleVoices });
     } catch (error) {
+      try {
+        log({
+          provider: 'mistral',
+          endpoint: 'voices',
+          statusCategory: error instanceof TTSError ? error.category : 'unexpected',
+          upstreamStatus: error instanceof TTSError ? error.status : null,
+          language: languageCode,
+        });
+      } catch {
+        // Diagnostics must never alter the client response.
+      }
+
       if (error instanceof TTSError) {
         return ttsErrorResponse(error);
       }
