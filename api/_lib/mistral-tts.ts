@@ -232,7 +232,7 @@ export async function listPresetVoices(
 ): Promise<MistralVoice[]> {
   const payload = await requestJson(
     config,
-    '/audio/voices?limit=10&offset=0&type=preset',
+    '/audio/voices?limit=10&offset=0&type=all',
     { method: 'GET' },
     fetchImpl,
     signal,
