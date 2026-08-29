@@ -1,5 +1,5 @@
 import type { Language } from '../../types';
-import { AudioCache } from './audioCache';
+import { AudioCache, type AudioCacheLease } from './audioCache';
 import { normalizeSpeechText } from './textSegments';
 import {
   TTSAdapterError,
@@ -23,6 +23,88 @@ export interface VoxtralSpeechAdapterOptions {
   createAudio?: () => HTMLAudioElement;
   createObjectURL?: (blob: Blob) => string;
   revokeObjectURL?: (url: string) => void;
+}
+
+interface QueuedSynthesis {
+  cancelled: boolean;
+  start(): void;
+}
+
+class SynthesisLimiter {
+  private active = 0;
+  private readonly queue: QueuedSynthesis[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  run<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) return Promise.reject(cancelledError());
+
+    return new Promise<T>((resolve, reject) => {
+      let started = false;
+      const task: QueuedSynthesis = {
+        cancelled: false,
+        start: () => {
+          if (task.cancelled) return;
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          started = true;
+          signal.removeEventListener('abort', onAbort);
+          this.active += 1;
+          let operation: Promise<T>;
+          try {
+            operation = work();
+          } catch (error) {
+            reject(error);
+            this.release();
+            return;
+          }
+          void operation.then(
+            (value) => {
+              resolve(value);
+              this.release();
+            },
+            (error: unknown) => {
+              reject(error);
+              this.release();
+            },
+          );
+        },
+      };
+      const onAbort = () => {
+        if (started || task.cancelled) return;
+        task.cancelled = true;
+        signal.removeEventListener('abort', onAbort);
+        reject(cancelledError());
+        this.drain();
+      };
+
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.queue.push(task);
+      this.drain();
+    });
+  }
+
+  private release(): void {
+    this.active -= 1;
+    this.drain();
+  }
+
+  private drain(): void {
+    while (this.active < this.limit && this.queue.length > 0) {
+      const task = this.queue.shift();
+      if (!task || task.cancelled) continue;
+      task.start();
+    }
+  }
+}
+
+interface InFlightGeneration {
+  controller: AbortController;
+  consumers: number;
+  promise: Promise<Blob>;
+  settled: boolean;
 }
 
 const silentUnit = (): PlaybackUnit => ({
@@ -51,15 +133,13 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
   private readonly cache: AudioCache;
   private readonly fetchAudio: FetchAudio;
   private readonly createAudio: () => HTMLAudioElement;
-  private readonly createObjectURL: (blob: Blob) => string;
-  private readonly revokeObjectURL: (url: string) => void;
+  private readonly inFlight = new Map<string, InFlightGeneration>();
+  private readonly synthesisLimiter = new SynthesisLimiter(3);
 
   constructor(options: VoxtralSpeechAdapterOptions) {
     this.cache = options.cache;
     this.fetchAudio = options.fetchAudio ?? fetchVoxtralAudio;
     this.createAudio = options.createAudio ?? (() => new Audio());
-    this.createObjectURL = options.createObjectURL ?? ((blob) => URL.createObjectURL(blob));
-    this.revokeObjectURL = options.revokeObjectURL ?? ((url) => URL.revokeObjectURL(url));
   }
 
   async prepare(
@@ -79,13 +159,12 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
       ? segment
       : { ...segment, spokenText: normalizedText };
     const cacheKey = createVoxtralCacheKey(normalizedSegment, context);
-    let sourceUrl = this.cache.get(cacheKey);
-    let cacheOwned = sourceUrl !== undefined;
+    let lease = this.cache.acquire(cacheKey);
 
-    if (!sourceUrl) {
+    if (!lease) {
       let blob: Blob;
       try {
-        blob = await this.fetchAudio(normalizedSegment, context.language, context.voiceId, signal);
+        blob = await this.generateCoalesced(cacheKey, normalizedSegment, context, signal);
       } catch (error) {
         if (error instanceof TTSAdapterError) throw error;
         if (signal.aborted) throw cancelledError();
@@ -95,13 +174,17 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
         throw cancelledError();
       }
 
-      sourceUrl = this.cache.set(cacheKey, blob);
-      cacheOwned = sourceUrl !== undefined;
-      sourceUrl ??= this.createObjectURL(blob);
+      lease = this.cache.acquire(cacheKey) ?? this.cache.setAndAcquire(cacheKey, blob);
     }
 
-    const audio = this.createAudio();
-    audio.src = sourceUrl;
+    let audio: HTMLAudioElement;
+    try {
+      audio = this.createAudio();
+    } catch {
+      lease.release();
+      throw invalidAudioError();
+    }
+    audio.src = lease.url;
     audio.playbackRate = context.speed;
 
     let playback: Promise<void> | null = null;
@@ -220,8 +303,67 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
         signal.removeEventListener('abort', onAbort);
         settleStarted();
         settle();
-        if (!cacheOwned) this.revokeObjectURL(sourceUrl);
+        lease.release();
       },
     };
+  }
+
+  private generateCoalesced(
+    cacheKey: string,
+    segment: SpeechSegment,
+    context: AdapterContext,
+    signal: AbortSignal,
+  ): Promise<Blob> {
+    let generation = this.inFlight.get(cacheKey);
+    if (!generation) {
+      const controller = new AbortController();
+      generation = {
+        controller,
+        consumers: 0,
+        promise: this.synthesisLimiter.run(
+          () => this.fetchAudio(segment, context.language, context.voiceId, controller.signal),
+          controller.signal,
+        ).then((blob) => {
+          if (this.cache.get(cacheKey) === undefined) this.cache.set(cacheKey, blob);
+          return blob;
+        }),
+        settled: false,
+      };
+      this.inFlight.set(cacheKey, generation);
+      const completedGeneration = generation;
+      const settle = () => {
+        completedGeneration.settled = true;
+        if (this.inFlight.get(cacheKey) === completedGeneration) this.inFlight.delete(cacheKey);
+      };
+      void generation.promise.then(settle, settle);
+    }
+
+    return this.consumeGeneration(generation, signal);
+  }
+
+  private consumeGeneration(generation: InFlightGeneration, signal: AbortSignal): Promise<Blob> {
+    if (signal.aborted) return Promise.reject(cancelledError());
+    generation.consumers += 1;
+
+    const result = new Promise<Blob>((resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        callback();
+      };
+      const onAbort = () => finish(() => reject(cancelledError()));
+      signal.addEventListener('abort', onAbort, { once: true });
+      void generation.promise.then(
+        (blob) => finish(() => resolve(blob)),
+        (error: unknown) => finish(() => reject(error)),
+      );
+    });
+
+    return result.finally(() => {
+      generation.consumers -= 1;
+      if (generation.consumers === 0 && !generation.settled) generation.controller.abort();
+    });
   }
 }

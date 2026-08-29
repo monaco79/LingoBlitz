@@ -14,6 +14,30 @@ const createCache = (maxEntries: number, maxBytes: number) => {
 };
 
 describe('AudioCache', () => {
+  it('defers eviction revocation until the last active lease releases', () => {
+    const { cache, revokeObjectURL } = createCache(1, 100);
+    const leasable = cache as AudioCache & {
+      acquire(key: string): { url: string; release(): void } | undefined;
+      setAndAcquire(key: string, blob: Blob): { url: string; release(): void };
+    };
+
+    expect(typeof leasable.acquire).toBe('function');
+    expect(typeof leasable.setAndAcquire).toBe('function');
+    const first = leasable.setAndAcquire('first', blobOfSize(10));
+    const same = leasable.acquire('first');
+    const second = leasable.setAndAcquire('second', blobOfSize(10));
+
+    expect(revokeObjectURL).not.toHaveBeenCalledWith(first.url);
+    first.release();
+    expect(revokeObjectURL).not.toHaveBeenCalledWith(first.url);
+    same?.release();
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith(first.url);
+
+    second.release();
+    cache.clear();
+    expect(revokeObjectURL.mock.calls.filter(([url]) => url === second.url)).toHaveLength(1);
+  });
+
   it('evicts the least recently used entry after get refreshes access order', () => {
     const { cache, revokeObjectURL } = createCache(2, 100);
     const firstUrl = cache.set('first', blobOfSize(10));

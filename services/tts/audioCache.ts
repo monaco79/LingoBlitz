@@ -3,7 +3,15 @@ const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
 
 interface AudioCacheEntry {
   byteLength: number;
+  leaseCount: number;
+  retained: boolean;
+  revoked: boolean;
   url: string;
+}
+
+export interface AudioCacheLease {
+  readonly url: string;
+  release(): void;
 }
 
 export interface AudioCacheOptions {
@@ -37,55 +45,92 @@ export class AudioCache {
   }
 
   get(key: string): string | undefined {
-    const entry = this.entries.get(key);
-    if (!entry) {
-      return undefined;
-    }
+    return this.touch(key)?.url;
+  }
 
-    this.entries.delete(key);
-    this.entries.set(key, entry);
-    return entry.url;
+  acquire(key: string): AudioCacheLease | undefined {
+    const entry = this.touch(key);
+    return entry ? this.createLease(entry) : undefined;
   }
 
   set(key: string, blob: Blob): string | undefined {
+    if (blob.size > this.maxBytes) return undefined;
+    return this.store(key, blob).url;
+  }
+
+  setAndAcquire(key: string, blob: Blob): AudioCacheLease {
     if (blob.size > this.maxBytes) {
-      return undefined;
+      return this.createLease(this.createEntry(blob, false));
     }
-
-    this.delete(key);
-
-    const entry = {
-      byteLength: blob.size,
-      url: this.createObjectURL(blob),
-    };
-    this.entries.set(key, entry);
-    this.byteLength += entry.byteLength;
-
-    while (this.entries.size > this.maxEntries || this.byteLength > this.maxBytes) {
-      const oldestKey = this.entries.keys().next().value;
-      if (oldestKey === undefined) {
-        break;
-      }
-      this.delete(oldestKey);
-    }
-
-    return entry.url;
+    return this.createLease(this.store(key, blob));
   }
 
   delete(key: string): void {
     const entry = this.entries.get(key);
-    if (!entry) {
-      return;
-    }
+    if (!entry) return;
 
     this.entries.delete(key);
     this.byteLength -= entry.byteLength;
-    this.revokeObjectURL(entry.url);
+    entry.retained = false;
+    this.revokeIfUnowned(entry);
   }
 
   clear(): void {
     for (const key of [...this.entries.keys()]) {
       this.delete(key);
     }
+  }
+
+  private createEntry(blob: Blob, retained: boolean): AudioCacheEntry {
+    return {
+      byteLength: blob.size,
+      leaseCount: 0,
+      retained,
+      revoked: false,
+      url: this.createObjectURL(blob),
+    };
+  }
+
+  private createLease(entry: AudioCacheEntry): AudioCacheLease {
+    entry.leaseCount += 1;
+    let released = false;
+    return {
+      url: entry.url,
+      release: () => {
+        if (released) return;
+        released = true;
+        entry.leaseCount -= 1;
+        this.revokeIfUnowned(entry);
+      },
+    };
+  }
+
+  private store(key: string, blob: Blob): AudioCacheEntry {
+    this.delete(key);
+    const entry = this.createEntry(blob, true);
+    this.entries.set(key, entry);
+    this.byteLength += entry.byteLength;
+
+    while (this.entries.size > this.maxEntries || this.byteLength > this.maxBytes) {
+      const oldestKey = this.entries.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.delete(oldestKey);
+    }
+
+    return entry;
+  }
+
+  private touch(key: string): AudioCacheEntry | undefined {
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    return entry;
+  }
+
+  private revokeIfUnowned(entry: AudioCacheEntry): void {
+    if (entry.retained || entry.leaseCount > 0 || entry.revoked) return;
+    entry.revoked = true;
+    this.revokeObjectURL(entry.url);
   }
 }
