@@ -7,6 +7,13 @@ import {
 import { isVoxtralSupported } from './languageConfig';
 
 const DEFAULT_SPEED = 1;
+const MIN_SPEED = 0.6;
+const MAX_SPEED = 1.4;
+
+const normalizeSpeed = (speed: unknown): number =>
+  typeof speed === 'number' && Number.isFinite(speed)
+    ? Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed))
+    : DEFAULT_SPEED;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -44,7 +51,7 @@ export const createDefaultTTSSettings = (language: Language, speed = DEFAULT_SPE
   preferences: {
     [language]: defaultPreference(language),
   },
-  speed: typeof speed === 'number' && Number.isFinite(speed) ? speed : DEFAULT_SPEED,
+  speed: normalizeSpeed(speed),
   autoRead: false,
 });
 
@@ -79,10 +86,7 @@ export const migrateTTSSettings = (
 
   return {
     preferences,
-    speed:
-      typeof raw.speed === 'number' && Number.isFinite(raw.speed)
-        ? raw.speed
-        : DEFAULT_SPEED,
+    speed: normalizeSpeed(raw.speed),
     autoRead: typeof raw.autoRead === 'boolean' ? raw.autoRead : false,
   };
 };

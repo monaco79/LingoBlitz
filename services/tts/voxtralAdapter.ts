@@ -8,14 +8,14 @@ import {
   type SpeechAdapter,
   type SpeechSegment,
 } from './types';
-import { fetchVoxtralAudio } from './voxtralApi';
+import { fetchVoxtralAudio, type VoxtralAudioResult } from './voxtralApi';
 
 type FetchAudio = (
   segment: SpeechSegment,
   language: Language,
   voiceId: string,
   signal?: AbortSignal,
-) => Promise<Blob>;
+) => Promise<Blob | VoxtralAudioResult>;
 
 export interface VoxtralSpeechAdapterOptions {
   cache: AudioCache;
@@ -103,8 +103,13 @@ class SynthesisLimiter {
 interface InFlightGeneration {
   controller: AbortController;
   consumers: number;
-  promise: Promise<Blob>;
+  promise: Promise<GeneratedAudio>;
   settled: boolean;
+}
+
+interface GeneratedAudio {
+  blob: Blob;
+  cacheKey: string;
 }
 
 const silentUnit = (): PlaybackUnit => ({
@@ -135,6 +140,7 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
   private readonly createAudio: () => HTMLAudioElement;
   private readonly inFlight = new Map<string, InFlightGeneration>();
   private readonly synthesisLimiter = new SynthesisLimiter(3);
+  private serverModelMarker: string | null = null;
 
   constructor(options: VoxtralSpeechAdapterOptions) {
     this.cache = options.cache;
@@ -158,13 +164,16 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
     const normalizedSegment = normalizedText === segment.spokenText
       ? segment
       : { ...segment, spokenText: normalizedText };
-    const cacheKey = createVoxtralCacheKey(normalizedSegment, context);
+    const lookupContext = this.serverModelMarker
+      ? { ...context, modelMarker: this.serverModelMarker }
+      : context;
+    let cacheKey = createVoxtralCacheKey(normalizedSegment, lookupContext);
     let lease = this.cache.acquire(cacheKey);
 
     if (!lease) {
-      let blob: Blob;
+      let generated: GeneratedAudio;
       try {
-        blob = await this.generateCoalesced(cacheKey, normalizedSegment, context, signal);
+        generated = await this.generateCoalesced(cacheKey, normalizedSegment, context, signal);
       } catch (error) {
         if (error instanceof TTSAdapterError) throw error;
         if (signal.aborted) throw cancelledError();
@@ -174,7 +183,8 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
         throw cancelledError();
       }
 
-      lease = this.cache.acquire(cacheKey) ?? this.cache.setAndAcquire(cacheKey, blob);
+      cacheKey = generated.cacheKey;
+      lease = this.cache.acquire(cacheKey) ?? this.cache.setAndAcquire(cacheKey, generated.blob);
     }
 
     let audio: HTMLAudioElement;
@@ -313,7 +323,7 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
     segment: SpeechSegment,
     context: AdapterContext,
     signal: AbortSignal,
-  ): Promise<Blob> {
+  ): Promise<GeneratedAudio> {
     let generation = this.inFlight.get(cacheKey);
     if (!generation) {
       const controller = new AbortController();
@@ -323,9 +333,22 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
         promise: this.synthesisLimiter.run(
           () => this.fetchAudio(segment, context.language, context.voiceId, controller.signal),
           controller.signal,
-        ).then((blob) => {
-          if (this.cache.get(cacheKey) === undefined) this.cache.set(cacheKey, blob);
-          return blob;
+        ).then((result) => {
+          const isServerResult = !(result instanceof Blob);
+          const blob = isServerResult ? result.blob : result;
+          const modelMarker = isServerResult ? result.modelMarker.trim() : context.modelMarker;
+          if (!modelMarker) {
+            throw new TTSAdapterError('invalid_audio', 'Voxtral returned invalid audio');
+          }
+          if (isServerResult) this.serverModelMarker = modelMarker;
+          const resolvedCacheKey = createVoxtralCacheKey(
+            segment,
+            { ...context, modelMarker },
+          );
+          if (this.cache.get(resolvedCacheKey) === undefined) {
+            this.cache.set(resolvedCacheKey, blob);
+          }
+          return { blob, cacheKey: resolvedCacheKey };
         }),
         settled: false,
       };
@@ -341,11 +364,11 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
     return this.consumeGeneration(generation, signal);
   }
 
-  private consumeGeneration(generation: InFlightGeneration, signal: AbortSignal): Promise<Blob> {
+  private consumeGeneration(generation: InFlightGeneration, signal: AbortSignal): Promise<GeneratedAudio> {
     if (signal.aborted) return Promise.reject(cancelledError());
     generation.consumers += 1;
 
-    const result = new Promise<Blob>((resolve, reject) => {
+    const result = new Promise<GeneratedAudio>((resolve, reject) => {
       let settled = false;
       const finish = (callback: () => void) => {
         if (settled) return;
@@ -356,7 +379,7 @@ export class VoxtralSpeechAdapter implements SpeechAdapter {
       const onAbort = () => finish(() => reject(cancelledError()));
       signal.addEventListener('abort', onAbort, { once: true });
       void generation.promise.then(
-        (blob) => finish(() => resolve(blob)),
+        (generated) => finish(() => resolve(generated)),
         (error: unknown) => finish(() => reject(error)),
       );
     });

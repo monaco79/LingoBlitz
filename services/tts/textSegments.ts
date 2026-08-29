@@ -32,7 +32,10 @@ type SentenceSegmenterConstructor = new (
 const wordCount = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length;
 
 export const normalizeSpeechText = (text: string): string => text
+  .replace(/!?\[([^\]]*)\]\((?:\\.|[^)])*\)/g, '$1')
+  .replace(/(^|\n)[ \t]{0,3}#{1,6}(?:[ \t]+|(?=\n|$))/g, '$1')
   .replace(/[*_`~]+/g, '')
+  .replace(/[\p{Cc}\u061C\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/gu, ' ')
   .replace(/[\p{Extended_Pictographic}\uFE0E\uFE0F\u200D]/gu, '')
   .replace(/\s+/g, ' ')
   .trim();

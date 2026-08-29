@@ -203,6 +203,7 @@ export function createSpeechHandler(dependencies: SpeechHandlerDependencies = {}
           'content-type': 'audio/mpeg',
           'cache-control': 'private, no-store',
           'x-content-type-options': 'nosniff',
+          'x-tts-model': ttsConfig.model,
         },
       }), 'success');
     } catch (error) {

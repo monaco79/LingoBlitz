@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Language } from '../../types';
 import { AudioCache } from './audioCache';
 import { TTSAdapterError, type AdapterContext, type PlaybackUnit, type SpeechSegment } from './types';
-import { VoxtralSpeechAdapter } from './voxtralAdapter';
+import { createVoxtralCacheKey, VoxtralSpeechAdapter } from './voxtralAdapter';
 
 const segment: SpeechSegment = {
   id: 'segment-1',
@@ -33,7 +33,7 @@ const createHarness = (overrides: {
     language: Language,
     voiceId: string,
     signal?: AbortSignal,
-  ) => Promise<Blob>;
+  ) => Promise<Blob | { blob: Blob; modelMarker: string }>;
   maxBytes?: number;
   maxEntries?: number;
 } = {}) => {
@@ -175,6 +175,28 @@ describe('VoxtralSpeechAdapter', () => {
     await adapter.prepare(segment, { ...context, voiceId: 'voice-2' }, new AbortController().signal);
 
     expect(fetchAudio).toHaveBeenCalledTimes(4);
+  });
+
+  it('stores generated audio under the server-configured model namespace', async () => {
+    const serverModel = 'configured-server-model';
+    const fetchAudio = vi.fn(async () => ({
+      blob: new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/mpeg' }),
+      modelMarker: serverModel,
+    }));
+    const { adapter, cache } = createHarness({ fetchAudio });
+
+    const first = await adapter.prepare(segment, context, new AbortController().signal);
+    first.dispose();
+    const second = await adapter.prepare(
+      segment,
+      { ...context, modelMarker: 'stale-client-default' },
+      new AbortController().signal,
+    );
+
+    expect(fetchAudio).toHaveBeenCalledTimes(1);
+    expect(cache.get(createVoxtralCacheKey(segment, { ...context, modelMarker: serverModel }))).toBeDefined();
+    expect(cache.get(createVoxtralCacheKey(segment, context))).toBeUndefined();
+    second.dispose();
   });
 
   it('does not request audio for a silent display segment', async () => {

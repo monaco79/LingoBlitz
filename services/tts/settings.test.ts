@@ -16,6 +16,13 @@ describe('TTS language configuration', () => {
 });
 
 describe('TTS settings migration', () => {
+  it('clamps requested default and persisted playback speeds to the supported range', () => {
+    expect(createDefaultTTSSettings(Language.German, 0.2).speed).toBe(0.6);
+    expect(createDefaultTTSSettings(Language.German, 2).speed).toBe(1.4);
+    expect(migrateTTSSettings({ speed: -1 }, Language.German).speed).toBe(0.6);
+    expect(migrateTTSSettings({ speed: 1.8 }, Language.German).speed).toBe(1.4);
+  });
+
   it('migrates a legacy browser voice while selecting Voxtral for supported languages', () => {
     const migrated = migrateTTSSettings(
       { voice: 'Google Deutsch', speed: 0.8, autoRead: true },

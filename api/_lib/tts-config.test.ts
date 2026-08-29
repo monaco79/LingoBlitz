@@ -7,11 +7,17 @@ import { resolveTTSConfig } from './tts-config.ts';
 
 test('documents the server-only Voxtral environment contract', () => {
   const example = readFileSync(fileURLToPath(new URL('../../.env.example', import.meta.url)), 'utf8');
+  const variableNames = example
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1])
+    .filter((name): name is string => name !== undefined);
 
-  assert.match(example, /^TTS_ENABLED=/m);
-  assert.match(example, /^TTS_MODEL=/m);
-  assert.match(example, /^MISTRAL_API_KEY=/m);
-  assert.doesNotMatch(example, /^VITE_MISTRAL_API_KEY=/m);
+  assert.deepEqual(
+    variableNames.filter((name) => name.startsWith('TTS_')),
+    ['TTS_ENABLED', 'TTS_MODEL'],
+  );
+  assert.equal(variableNames.includes('MISTRAL_API_KEY'), true);
+  assert.equal(variableNames.some((name) => name.startsWith('VITE_MISTRAL_')), false);
 });
 
 test('enables Voxtral with its pinned defaults when a Mistral key is present', () => {

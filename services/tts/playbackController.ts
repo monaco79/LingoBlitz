@@ -9,7 +9,7 @@ import {
 } from './types';
 
 const PREPARE_LOOKAHEAD = 3;
-const VOXTRAL_MODEL_MARKER = 'voxtral-mini-tts-2603';
+const UNRESOLVED_VOXTRAL_MODEL_MARKER = 'server-model-pending';
 
 export interface PlaybackSnapshot {
   status: 'idle' | 'loading' | 'playing' | 'paused';
@@ -215,7 +215,7 @@ export class PlaybackController {
       language: request.language,
       voiceId: source === 'voxtral' ? preference.voxtralVoiceId : preference.browserVoiceName,
       speed: request.settings.speed,
-      modelMarker: source === 'voxtral' ? VOXTRAL_MODEL_MARKER : 'browser',
+      modelMarker: source === 'voxtral' ? UNRESOLVED_VOXTRAL_MODEL_MARKER : 'browser',
     };
   }
 

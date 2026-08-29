@@ -104,6 +104,16 @@ describe('speech text segments', () => {
     expect(normalizeSpeechText('**Hallo** 👋  Welt')).toBe('Hallo Welt');
   });
 
+  it('removes Markdown links, headings, and unsupported controls only from speech', () => {
+    const text = '## **Titel**\nLies [diesen Text](https://example.test/page).\u0007\u202E Weiter.';
+
+    expect(normalizeSpeechText(text)).toBe('Titel Lies diesen Text. Weiter.');
+    expect(createSpeechSegments(text, Language.German, 'normalized')
+      .map(({ displayText }) => displayText).join('')).toBe(text);
+    expect(createSpeechSegments(text, Language.German, 'normalized')
+      .map(({ spokenText }) => spokenText).join(' ')).not.toMatch(/(?:##|https?:|\u0007|\u202E)/u);
+  });
+
   it.each([
     ['bold', '**Richtig!** Das passt.', '**Richtig!**'],
     ['italic', '*Richtig!* Das passt.', '*Richtig!*'],

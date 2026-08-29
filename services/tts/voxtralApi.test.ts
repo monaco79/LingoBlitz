@@ -39,12 +39,15 @@ describe('Voxtral API client', () => {
   it('posts the exact speech body and accepts an MP3 response', async () => {
     const audio = new Uint8Array([1, 2, 3]);
     const fetchImpl = vi.fn(async () => new Response(audio, {
-      headers: { 'content-type': 'audio/mpeg' },
+      headers: {
+        'content-type': 'audio/mpeg',
+        'x-tts-model': 'configured-server-model',
+      },
     }));
     const api = createVoxtralApi(fetchImpl);
     const signal = new AbortController().signal;
 
-    const blob = await api.fetchVoxtralAudio(segment, Language.German, 'voice-1', signal);
+    const result = await api.fetchVoxtralAudio(segment, Language.German, 'voice-1', signal);
 
     expect(fetchImpl).toHaveBeenCalledWith('/api/tts/speech', {
       method: 'POST',
@@ -52,14 +55,18 @@ describe('Voxtral API client', () => {
       body: JSON.stringify({ text: 'Hallo Welt.', language: 'German', voiceId: 'voice-1' }),
       signal,
     });
-    expect(blob.type).toBe('audio/mpeg');
-    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(audio);
+    expect(result.modelMarker).toBe('configured-server-model');
+    expect(result.blob.type).toBe('audio/mpeg');
+    expect(new Uint8Array(await result.blob.arrayBuffer())).toEqual(audio);
   });
 
   it('rejects non-MP3 and empty audio without exposing response data', async () => {
     for (const response of [
       new Response('private body', { headers: { 'content-type': 'text/plain' } }),
-      new Response(new Uint8Array(), { headers: { 'content-type': 'audio/mpeg' } }),
+      new Response(new Uint8Array(), {
+        headers: { 'content-type': 'audio/mpeg', 'x-tts-model': 'configured-server-model' },
+      }),
+      new Response(new Uint8Array([1]), { headers: { 'content-type': 'audio/mpeg' } }),
     ]) {
       const api = createVoxtralApi(vi.fn(async () => response));
 
@@ -141,7 +148,9 @@ describe('Voxtral API client', () => {
   });
 
   it('sanitizes failures while reading the audio response', async () => {
-    const response = new Response(new Uint8Array([1]), { headers: { 'content-type': 'audio/mpeg' } });
+    const response = new Response(new Uint8Array([1]), {
+      headers: { 'content-type': 'audio/mpeg', 'x-tts-model': 'configured-server-model' },
+    });
     vi.spyOn(response, 'blob').mockRejectedValue(new Error('private response stream detail'));
     const api = createVoxtralApi(vi.fn(async () => response));
 

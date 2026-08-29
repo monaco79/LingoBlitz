@@ -91,6 +91,7 @@ test('returns MP3 bytes with private no-store response headers', async () => {
   assert.equal(response.headers.get('content-type'), 'audio/mpeg');
   assert.equal(response.headers.get('cache-control'), 'private, no-store');
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(response.headers.get('x-tts-model'), enabledConfig.model);
 });
 
 test('maps TTS moderation, rate limit, configuration, and timeout failures safely', async () => {

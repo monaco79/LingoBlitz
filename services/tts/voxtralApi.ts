@@ -8,6 +8,11 @@ import {
 
 type FetchImplementation = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+export interface VoxtralAudioResult {
+  blob: Blob;
+  modelMarker: string;
+}
+
 const safeError = (category: TTSAdapterErrorCategory): TTSAdapterError =>
   new TTSAdapterError(category, 'Voxtral request failed');
 
@@ -131,7 +136,7 @@ export const createVoxtralApi = (fetchImpl: FetchImplementation) => ({
     language: Language,
     voiceId: string,
     signal?: AbortSignal,
-  ): Promise<Blob> {
+  ): Promise<VoxtralAudioResult> {
     const response = await request(fetchImpl, '/api/tts/speech', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -140,6 +145,10 @@ export const createVoxtralApi = (fetchImpl: FetchImplementation) => ({
     });
 
     if (response.headers.get('content-type')?.toLowerCase() !== 'audio/mpeg') {
+      throw new TTSAdapterError('invalid_audio', 'Voxtral returned invalid audio');
+    }
+    const modelMarker = response.headers.get('x-tts-model')?.trim();
+    if (!modelMarker) {
       throw new TTSAdapterError('invalid_audio', 'Voxtral returned invalid audio');
     }
 
@@ -158,7 +167,7 @@ export const createVoxtralApi = (fetchImpl: FetchImplementation) => ({
     if (audio.size === 0 || audio.type.toLowerCase() !== 'audio/mpeg') {
       throw new TTSAdapterError('invalid_audio', 'Voxtral returned invalid audio');
     }
-    return audio;
+    return { blob: audio, modelMarker };
   },
 });
 
@@ -172,4 +181,4 @@ export const fetchVoxtralAudio = (
   language: Language,
   voiceId: string,
   signal?: AbortSignal,
-): Promise<Blob> => createVoxtralApi(fetch).fetchVoxtralAudio(segment, language, voiceId, signal);
+): Promise<VoxtralAudioResult> => createVoxtralApi(fetch).fetchVoxtralAudio(segment, language, voiceId, signal);
