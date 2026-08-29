@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { Language, type TTSProvider, type TTSSettings } from '../../types';
-import { PlaybackController, type PlaybackSnapshot } from './playbackController';
+import { PlaybackController, type PlaybackRequest, type PlaybackSnapshot } from './playbackController';
 import {
   TTSAdapterError,
   type AdapterContext,
@@ -136,12 +136,17 @@ const makeSettings = (
   autoRead: false,
 });
 
-const createHarness = (options: { voxtralRejectsOnAbort?: boolean } = {}) => {
+const createHarness = (options: {
+  resolveVoxtralVoice?: (language: Language, signal: AbortSignal) => Promise<string | null>;
+  voxtralRejectsOnAbort?: boolean;
+} = {}) => {
   const browser = new ControlledAdapter();
   const voxtral = new ControlledAdapter(options.voxtralRejectsOnAbort ?? true);
-  const controller = new PlaybackController({
+  const controllerOptions = {
     adapters: { browser, voxtral },
-  });
+    resolveVoxtralVoice: options.resolveVoxtralVoice,
+  };
+  const controller = new PlaybackController(controllerOptions);
 
   return { browser, controller, voxtral };
 };
@@ -557,6 +562,68 @@ describe('PlaybackController queue and state', () => {
 });
 
 describe('PlaybackController provider fallback', () => {
+  it('lazily resolves and reports an empty Voxtral voice before first preparation', async () => {
+    const resolveVoxtralVoice = vi.fn(async () => 'resolved-voice');
+    const onVoxtralVoiceResolved = vi.fn();
+    const { controller, voxtral } = createHarness({ resolveVoxtralVoice });
+    const settings = makeSettings();
+    settings.preferences[Language.German]!.voxtralVoiceId = '';
+    settings.preferences[Language.Japanese] = {
+      provider: 'browser',
+      voxtralVoiceId: '',
+      browserVoiceName: 'Kyoko',
+    };
+    const savedSettings = structuredClone(settings);
+    const request = {
+      ownerId: 'test-owner',
+      segments: [makeSegment(0)],
+      language: Language.German,
+      settings,
+      onVoxtralVoiceResolved,
+    } as PlaybackRequest & {
+      onVoxtralVoiceResolved(language: Language, voiceId: string): void;
+    };
+
+    const playback = controller.play(request);
+    await waitFor(() => expect(resolveVoxtralVoice).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(voxtral.calls).toHaveLength(1));
+
+    expect(voxtral.calls[0].context.voiceId).toBe('resolved-voice');
+    expect(resolveVoxtralVoice).toHaveBeenCalledWith(Language.German, expect.any(AbortSignal));
+    expect(onVoxtralVoiceResolved).toHaveBeenCalledExactlyOnceWith(Language.German, 'resolved-voice');
+    expect(settings).toEqual(savedSettings);
+
+    const unit = voxtral.resolve(0);
+    await waitFor(() => expect(unit.play).toHaveBeenCalledTimes(1));
+    unit.finish();
+    await playback;
+  });
+
+  it.each([
+    ['no compatible preset', async () => null],
+    ['voice discovery failure', async () => { throw new TTSAdapterError('upstream', 'Unavailable'); }],
+  ])('falls back once when lazy resolution has %s', async (_case, resolveVoxtralVoice) => {
+    const onFallback = vi.fn();
+    const { browser, controller, voxtral } = createHarness({ resolveVoxtralVoice });
+    const settings = makeSettings();
+    settings.preferences[Language.German]!.voxtralVoiceId = '';
+    const playback = controller.play({
+      ownerId: 'test-owner',
+      segments: [makeSegment(0)],
+      language: Language.German,
+      settings,
+      onFallback,
+    });
+
+    await waitFor(() => expect(browser.calls).toHaveLength(1));
+    expect(voxtral.calls).toHaveLength(0);
+    expect(onFallback).toHaveBeenCalledTimes(1);
+    const unit = browser.resolve(0);
+    await waitFor(() => expect(unit.play).toHaveBeenCalledTimes(1));
+    unit.finish();
+    await playback;
+  });
+
   it('does not notify fallback after a subscription listener stops the operation', async () => {
     const { browser, controller, voxtral } = createHarness();
     const onFallback = vi.fn();

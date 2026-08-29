@@ -14,6 +14,7 @@ interface VocabularyPracticeProps {
   learningLanguage: Language;
   ttsSettings: TTSSettings;
   onFallback: () => void;
+  onVoxtralVoiceResolved?: (language: Language, voiceId: string) => void;
 }
 
 type PracticeCard = VocabularyItem & { speechIdPrefix: string };
@@ -24,6 +25,7 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
   learningLanguage,
   ttsSettings,
   onFallback,
+  onVoxtralVoiceResolved,
 }) => {
   const nextSpeechId = useRef(0);
   const buildPracticeCards = (items: VocabularyItem[]): PracticeCard[] => items.map((item) => ({
@@ -71,13 +73,14 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
         language: learningLanguage,
         settings: ttsSettings,
         onFallback,
+        ...(onVoxtralVoiceResolved ? { onVoxtralVoiceResolved } : {}),
       }).catch((error: unknown) => {
         console.error('TTS playback failed', error);
       });
     }, 300);
 
     return () => window.clearTimeout(timer);
-  }, [currentItem, learningLanguage, onFallback, showConfetti, ttsSettings, wordSegments]);
+  }, [currentItem, learningLanguage, onFallback, onVoxtralVoiceResolved, showConfetti, ttsSettings, wordSegments]);
 
   const handleKnownWord = () => {
     ttsService.stopSpeech();

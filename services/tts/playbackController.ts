@@ -24,11 +24,13 @@ export interface PlaybackRequest {
   language: Language;
   settings: TTSSettings;
   onFallback?: () => void;
+  onVoxtralVoiceResolved?: (language: Language, voiceId: string) => void;
 }
 
 export interface PlaybackControllerOptions {
   adapters: Record<TTSProvider, SpeechAdapter>;
   resolvePreference?: typeof getTTSPreference;
+  resolveVoxtralVoice?: (language: Language, signal: AbortSignal) => Promise<string | null>;
 }
 
 type PlaybackListener = (snapshot: PlaybackSnapshot) => void;
@@ -115,6 +117,7 @@ export class PlaybackController {
   private readonly adapters: Record<TTSProvider, SpeechAdapter>;
   private readonly listeners = new Set<PlaybackListener>();
   private readonly resolvePreference: typeof getTTSPreference;
+  private readonly resolveVoxtralVoice?: PlaybackControllerOptions['resolveVoxtralVoice'];
   private currentOperation: PlaybackOperation | null = null;
   private nextToken = 0;
   private snapshot = idleSnapshot();
@@ -122,6 +125,7 @@ export class PlaybackController {
   constructor(options: PlaybackControllerOptions) {
     this.adapters = options.adapters;
     this.resolvePreference = options.resolvePreference ?? getTTSPreference;
+    this.resolveVoxtralVoice = options.resolveVoxtralVoice;
   }
 
   play(request: PlaybackRequest): Promise<void> {
@@ -155,7 +159,9 @@ export class PlaybackController {
       source,
       ownerId: request.ownerId,
     });
-    this.ensureLookahead(operation);
+    if (source !== 'voxtral' || operation.context.voiceId) {
+      this.ensureLookahead(operation);
+    }
     void this.run(operation);
     return operation.deferred.promise;
   }
@@ -258,6 +264,7 @@ export class PlaybackController {
 
   private async run(operation: PlaybackOperation): Promise<void> {
     try {
+      await this.ensureVoxtralVoice(operation);
       while (this.isCurrent(operation) && operation.currentIndex < operation.segments.length) {
         this.ensureLookahead(operation);
         const entry = operation.preparations.get(operation.currentIndex);
@@ -349,6 +356,40 @@ export class PlaybackController {
       this.currentOperation = null;
       this.setSnapshot(idleSnapshot());
       operation.deferred.reject(error);
+    }
+  }
+
+  private async ensureVoxtralVoice(operation: PlaybackOperation): Promise<void> {
+    if (
+      operation.source !== 'voxtral'
+      || operation.context.voiceId
+      || operation.segments.length === 0
+      || !this.isCurrent(operation)
+    ) return;
+
+    let voiceId: string | null;
+    try {
+      voiceId = await this.resolveVoxtralVoice?.(
+        operation.request.language,
+        operation.stageAbort.signal,
+      ) ?? null;
+    } catch (error) {
+      if (this.tryFallback(operation, error)) return;
+      throw error;
+    }
+
+    if (!this.isCurrent(operation)) return;
+    if (!voiceId) {
+      const error = new TTSAdapterError('configuration', 'No compatible Voxtral voice is available');
+      if (this.tryFallback(operation, error)) return;
+      throw error;
+    }
+
+    operation.context = { ...operation.context, voiceId };
+    try {
+      operation.request.onVoxtralVoiceResolved?.(operation.request.language, voiceId);
+    } catch {
+      // Persistence failure must not prevent otherwise valid playback.
     }
   }
 

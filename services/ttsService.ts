@@ -11,9 +11,10 @@ import {
   type PlaybackSnapshot,
 } from './tts/playbackController';
 import { createSpeechSegments } from './tts/textSegments';
-import type { SpeechSegment, TTSVoiceOption } from './tts/types';
+import { TTSAdapterError, type SpeechSegment, type TTSVoiceOption } from './tts/types';
 import { VoxtralSpeechAdapter } from './tts/voxtralAdapter';
 import { fetchVoxtralVoices } from './tts/voxtralApi';
+import { toMistralLanguageCode } from './tts/languageConfig';
 
 interface PlaybackControllerFacade {
   getSnapshot(): PlaybackSnapshot;
@@ -31,6 +32,7 @@ export interface SpeakTextRequest {
   language: Language;
   settings: TTSSettings;
   onFallback?: () => void;
+  onVoxtralVoiceResolved?: (language: Language, voiceId: string) => void;
 }
 
 export interface TTSServiceOptions {
@@ -42,6 +44,46 @@ export interface TTSServiceOptions {
 }
 
 export const createTTSService = (options: TTSServiceOptions) => {
+  const voxtralVoiceCache = new Map<Language, TTSVoiceOption[]>();
+  const voxtralVoiceRequests = new Map<Language, Promise<TTSVoiceOption[]>>();
+  const compatibleVoxtralVoices = (language: Language, voices: TTSVoiceOption[]): TTSVoiceOption[] => {
+    const languageCode = toMistralLanguageCode(language);
+    if (!languageCode) return [];
+    return voices.filter((voice) => voice.provider === 'voxtral' && voice.languages.some((candidate) => {
+      const normalized = candidate.toLowerCase().replace('_', '-');
+      return normalized === languageCode || normalized.startsWith(`${languageCode}-`);
+    }));
+  };
+  const waitForSignal = <T,>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
+    if (!signal) return promise;
+    if (signal.aborted) {
+      return Promise.reject(new TTSAdapterError('cancelled', 'Voxtral voice discovery was cancelled'));
+    }
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(new TTSAdapterError('cancelled', 'Voxtral voice discovery was cancelled'));
+      signal.addEventListener('abort', onAbort, { once: true });
+      promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    });
+  };
+  const getVoxtralVoices = (language: Language, signal?: AbortSignal): Promise<TTSVoiceOption[]> => {
+    const cached = voxtralVoiceCache.get(language);
+    if (cached) return waitForSignal(Promise.resolve(cached), signal);
+
+    let pending = voxtralVoiceRequests.get(language);
+    if (!pending) {
+      pending = options.voxtralVoices(language, undefined).then((voices) => {
+        const compatible = compatibleVoxtralVoices(language, voices);
+        voxtralVoiceCache.set(language, compatible);
+        return compatible;
+      });
+      voxtralVoiceRequests.set(language, pending);
+      const clearPending = () => {
+        if (voxtralVoiceRequests.get(language) === pending) voxtralVoiceRequests.delete(language);
+      };
+      void pending.then(clearPending, clearPending);
+    }
+    return waitForSignal(pending, signal);
+  };
   const speakSegments = (request: PlaybackRequest): Promise<void> => options.controller.play(request);
   const speakText = (request: SpeakTextRequest): Promise<void> => speakSegments({
     segments: options.createSegments(request.text, request.language, request.idPrefix),
@@ -49,18 +91,23 @@ export const createTTSService = (options: TTSServiceOptions) => {
     language: request.language,
     settings: request.settings,
     onFallback: request.onFallback,
+    ...(request.onVoxtralVoiceResolved
+      ? { onVoxtralVoiceResolved: request.onVoxtralVoiceResolved }
+      : {}),
   });
   const getVoicesForLanguage = (
     language: Language,
     provider: TTSProvider,
     signal?: AbortSignal,
   ): Promise<TTSVoiceOption[]> => provider === 'voxtral'
-    ? options.voxtralVoices(language, signal)
+    ? getVoxtralVoices(language, signal)
     : options.browserVoices(language);
 
   return {
     getPlaybackSnapshot: (): PlaybackSnapshot => options.controller.getSnapshot(),
     getVoicesForLanguage,
+    resolveVoxtralVoice: async (language: Language, signal: AbortSignal): Promise<string | null> =>
+      (await getVoxtralVoices(language, signal))[0]?.id ?? null,
     pauseSpeech: (): void => options.controller.pause(),
     resumeSpeech: (): void => options.controller.resume(),
     speakSegments,
@@ -78,11 +125,13 @@ export const createTTSService = (options: TTSServiceOptions) => {
 const cache = new AudioCache();
 const browserAdapter = new BrowserSpeechAdapter();
 const voxtralAdapter = new VoxtralSpeechAdapter({ cache });
+let resolveSingletonVoxtralVoice = async (_language: Language, _signal: AbortSignal): Promise<string | null> => null;
 const controller = new PlaybackController({
   adapters: {
     browser: browserAdapter,
     voxtral: voxtralAdapter,
   },
+  resolveVoxtralVoice: (language, signal) => resolveSingletonVoxtralVoice(language, signal),
 });
 const singleton = createTTSService({
   browserVoices: (language) => browserAdapter.getVoices(language),
@@ -91,6 +140,7 @@ const singleton = createTTSService({
   subscribeToBrowserVoices: (listener) => browserAdapter.subscribeToVoiceChanges(listener),
   voxtralVoices: fetchVoxtralVoices,
 });
+resolveSingletonVoxtralVoice = singleton.resolveVoxtralVoice;
 
 export const getPlaybackSnapshot = singleton.getPlaybackSnapshot;
 export const getVoicesForLanguage = singleton.getVoicesForLanguage;

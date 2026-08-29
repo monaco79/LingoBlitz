@@ -16,6 +16,7 @@ interface ArticleProps {
   language: Language;
   onWordClick: (word: string, event: React.MouseEvent<HTMLSpanElement>) => void;
   onFallback: () => void;
+  onVoxtralVoiceResolved?: (language: Language, voiceId: string) => void;
   isActiveSurface: boolean;
   isAutoReadReady: boolean;
 }
@@ -28,6 +29,7 @@ const Article: React.FC<ArticleProps> = ({
   language,
   onWordClick,
   onFallback,
+  onVoxtralVoiceResolved,
   isActiveSurface,
   isAutoReadReady,
 }) => {
@@ -82,10 +84,11 @@ const Article: React.FC<ArticleProps> = ({
       language,
       settings: ttsSettings,
       onFallback,
+      ...(onVoxtralVoiceResolved ? { onVoxtralVoiceResolved } : {}),
     }).catch((error: unknown) => {
       console.error('TTS playback failed', error);
     });
-  }, [isActiveSurface, language, onFallback, playbackSegments, ttsSettings]);
+  }, [isActiveSurface, language, onFallback, onVoxtralVoiceResolved, playbackSegments, ttsSettings]);
 
   const play = useCallback(() => {
     cancelPendingAutoRead();

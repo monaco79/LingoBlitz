@@ -112,6 +112,51 @@ describe('App TTS integration', () => {
         autoRead: true,
       },
       onFallback: expect.any(Function),
+      onVoxtralVoiceResolved: expect.any(Function),
+    });
+  });
+
+  it('persists a lazily resolved migrated Voxtral voice without changing other preferences', async () => {
+    storeSettings(Language.German, {
+      preferences: {
+        [Language.German]: {
+          provider: 'voxtral',
+          voxtralVoiceId: '',
+          browserVoiceName: 'Legacy Anna',
+        },
+        [Language.Japanese]: {
+          provider: 'browser',
+          voxtralVoiceId: '',
+          browserVoiceName: 'Kyoko',
+        },
+      },
+      speed: 0.7,
+      autoRead: true,
+    });
+    tts.speakText.mockImplementation(async (request) => {
+      const resolvable = request as SpeakTextRequest & {
+        onVoxtralVoiceResolved?: (language: Language, voiceId: string) => void;
+      };
+      resolvable.onVoxtralVoiceResolved?.(Language.German, 'german-first');
+    });
+    await renderReadyApp();
+
+    fireEvent.click(screen.getByText('Reisen'));
+
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem('lingoBlitzSettings') ?? '{}');
+      expect(saved.tts.preferences[Language.German]).toEqual({
+        provider: 'voxtral',
+        voxtralVoiceId: 'german-first',
+        browserVoiceName: 'Legacy Anna',
+      });
+      expect(saved.tts.preferences[Language.Japanese]).toEqual({
+        provider: 'browser',
+        voxtralVoiceId: '',
+        browserVoiceName: 'Kyoko',
+      });
+      expect(saved.tts.speed).toBe(0.7);
+      expect(saved.tts.autoRead).toBe(true);
     });
   });
 

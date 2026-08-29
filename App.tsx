@@ -24,7 +24,7 @@ import Quiz from './components/Quiz';
 import VocabularyPractice from './components/VocabularyPractice';
 import TTSFallbackNotice from './components/TTSFallbackNotice';
 import * as aiService from './services/aiService';
-import { migrateTTSSettings } from './services/tts/settings';
+import { getTTSPreference, migrateTTSSettings } from './services/tts/settings';
 import type { PlaybackSnapshot } from './services/tts/playbackController';
 import * as ttsService from './services/ttsService';
 
@@ -123,6 +123,26 @@ const App: React.FC = () => {
 
   const handleTTSFallback = useCallback(() => {
     setTTSFallbackTrigger((current) => current + 1);
+  }, []);
+
+  const handleVoxtralVoiceResolved = useCallback((language: Language, voiceId: string) => {
+    setUserSettings((current) => {
+      if (!current) return current;
+      const preference = getTTSPreference(current.tts, language);
+      if (preference.voxtralVoiceId === voiceId) return current;
+      const nextSettings: UserSettings = {
+        ...current,
+        tts: {
+          ...current.tts,
+          preferences: {
+            ...current.tts.preferences,
+            [language]: { ...preference, voxtralVoiceId: voiceId },
+          },
+        },
+      };
+      localStorage.setItem('lingoBlitzSettings', JSON.stringify(nextSettings));
+      return nextSettings;
+    });
   }, []);
 
   const toggleTheme = () => {
@@ -294,6 +314,7 @@ const App: React.FC = () => {
         language: userSettings.learningLanguage,
         settings: userSettings.tts,
         onFallback: handleTTSFallback,
+        onVoxtralVoiceResolved: handleVoxtralVoiceResolved,
       }).catch((error: unknown) => {
         console.error('TTS playback failed', error);
       });
@@ -452,6 +473,7 @@ const App: React.FC = () => {
             language={userSettings.learningLanguage}
             onWordClick={handleWordClick}
             onFallback={handleTTSFallback}
+            onVoxtralVoiceResolved={handleVoxtralVoiceResolved}
             isActiveSurface={appState === AppState.GENERATING_ARTICLE || appState === AppState.POST_ARTICLE_CHOICE}
             isAutoReadReady={appState === AppState.POST_ARTICLE_CHOICE}
           />
@@ -481,6 +503,7 @@ const App: React.FC = () => {
             onWordClick={handleWordClick}
             ttsSettings={userSettings.tts}
             onFallback={handleTTSFallback}
+            onVoxtralVoiceResolved={handleVoxtralVoiceResolved}
             language={userSettings.learningLanguage}
             hasVocabulary={currentVocabulary.length > 0}
             onPracticeVocabulary={handlePracticeVocabulary}
@@ -498,6 +521,7 @@ const App: React.FC = () => {
             learningLanguage={userSettings!.learningLanguage}
             ttsSettings={userSettings.tts}
             onFallback={handleTTSFallback}
+            onVoxtralVoiceResolved={handleVoxtralVoiceResolved}
           />
         )}
 

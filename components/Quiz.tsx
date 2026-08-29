@@ -21,6 +21,7 @@ interface QuizProps {
   onPracticeVocabulary: () => void;
   hasCompletedVocabulary: boolean;
   onFallback: () => void;
+  onVoxtralVoiceResolved?: (language: Language, voiceId: string) => void;
   isActiveSurface: boolean;
 }
 
@@ -37,6 +38,7 @@ const Quiz: React.FC<QuizProps> = ({
   onPracticeVocabulary,
   hasCompletedVocabulary,
   onFallback,
+  onVoxtralVoiceResolved,
   isActiveSurface,
 }) => {
   const [answer, setAnswer] = useState('');
@@ -85,10 +87,11 @@ const Quiz: React.FC<QuizProps> = ({
       language,
       settings: ttsSettings,
       onFallback,
+      ...(onVoxtralVoiceResolved ? { onVoxtralVoiceResolved } : {}),
     }).catch((error: unknown) => {
       console.error('TTS playback failed', error);
     });
-  }, [currentSegments, isActiveSurface, language, onFallback, ttsSettings]);
+  }, [currentSegments, isActiveSurface, language, onFallback, onVoxtralVoiceResolved, ttsSettings]);
 
   const handlePlay = useCallback(() => {
     cancelPendingAutoRead();

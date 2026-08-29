@@ -158,6 +158,43 @@ describe('provider-neutral TTS facade', () => {
     expect(voxtralVoices).toHaveBeenCalledExactlyOnceWith(Language.German, undefined);
   });
 
+  it('promise-coalesces and session-caches compatible Voxtral voices per language', async () => {
+    let resolveVoices!: (voices: TTSVoiceOption[]) => void;
+    const coldVoices = new Promise<TTSVoiceOption[]>((resolve) => {
+      resolveVoices = resolve;
+    });
+    const voxtralVoices = vi.fn(() => coldVoices);
+    const service = createTTSService({
+      browserVoices: vi.fn(async () => []),
+      controller: makeController(),
+      createSegments: vi.fn(() => []),
+      voxtralVoices,
+    });
+    const compatible: TTSVoiceOption = {
+      id: 'german',
+      name: 'German preset',
+      displayName: 'German preset',
+      provider: 'voxtral',
+      languages: ['de'],
+    };
+    const incompatible: TTSVoiceOption = {
+      id: 'french',
+      name: 'French preset',
+      displayName: 'French preset',
+      provider: 'voxtral',
+      languages: ['fr'],
+    };
+
+    const first = service.getVoicesForLanguage(Language.German, 'voxtral');
+    const second = service.getVoicesForLanguage(Language.German, 'voxtral');
+    resolveVoices([incompatible, compatible]);
+
+    await expect(first).resolves.toEqual([compatible]);
+    await expect(second).resolves.toEqual([compatible]);
+    await expect(service.getVoicesForLanguage(Language.German, 'voxtral')).resolves.toEqual([compatible]);
+    expect(voxtralVoices).toHaveBeenCalledTimes(1);
+  });
+
   it('exposes browser voice changes without assigning a global handler from UI code', () => {
     const subscribeToBrowserVoices = vi.fn(() => () => undefined);
     const service = createTTSService({
