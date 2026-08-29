@@ -26,7 +26,13 @@ test('lists preset voices with Mistral bearer authentication', async () => {
   const voices = await listPresetVoices(config, (async (input, init) => {
     request = { input, init };
     return Response.json({
-      items: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }],
+      items: [{
+        id: 'voice-1',
+        name: 'Voice One',
+        languages: ['en'],
+        gender: null,
+        description: null,
+      }],
       total: 1,
       page: 1,
       page_size: 10,

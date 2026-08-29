@@ -190,13 +190,22 @@ function parseVoices(payload: unknown): MistralVoice[] {
       throw new TTSError('invalid_response', 502);
     }
 
-    const candidate = voice as Partial<MistralVoice>;
+    const candidate = voice as {
+      id?: unknown;
+      name?: unknown;
+      languages?: unknown;
+      gender?: unknown;
+      description?: unknown;
+    };
     if (
       typeof candidate.id !== 'string' || !candidate.id.trim()
       || typeof candidate.name !== 'string' || !candidate.name.trim()
-      || !Array.isArray(candidate.languages) || !candidate.languages.every((language) => typeof language === 'string')
-      || (candidate.gender !== undefined && typeof candidate.gender !== 'string')
-      || (candidate.description !== undefined && typeof candidate.description !== 'string')
+      || (candidate.languages !== undefined && (
+        !Array.isArray(candidate.languages)
+        || !candidate.languages.every((language) => typeof language === 'string')
+      ))
+      || (candidate.gender !== undefined && candidate.gender !== null && typeof candidate.gender !== 'string')
+      || (candidate.description !== undefined && candidate.description !== null && typeof candidate.description !== 'string')
     ) {
       throw new TTSError('invalid_response', 502);
     }
@@ -204,9 +213,9 @@ function parseVoices(payload: unknown): MistralVoice[] {
     return {
       id: candidate.id,
       name: candidate.name,
-      languages: candidate.languages,
-      ...(candidate.gender === undefined ? {} : { gender: candidate.gender }),
-      ...(candidate.description === undefined ? {} : { description: candidate.description }),
+      languages: Array.isArray(candidate.languages) ? candidate.languages : [],
+      ...(typeof candidate.gender === 'string' ? { gender: candidate.gender } : {}),
+      ...(typeof candidate.description === 'string' ? { description: candidate.description } : {}),
     };
   });
 }
