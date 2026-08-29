@@ -1,10 +1,12 @@
-// Last updated: 2025-11-18 19:35
-// Implemented resume-from-stop logic using tracked charIndex
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { Level, TTSSettings, Language } from '../types';
+import type { PlaybackSnapshot } from '../services/tts/playbackController';
+import { createSpeechSegments } from '../services/tts/textSegments';
 import * as ttsService from '../services/ttsService';
-import { segmentText, cleanWord } from '../utils/textProcessing';
+import { Language, Level, type TTSSettings } from '../types';
+import SpeakableText from './SpeakableText';
+
+const ARTICLE_PLAYBACK_OWNER = 'article';
 
 interface ArticleProps {
   title: string;
@@ -13,138 +15,140 @@ interface ArticleProps {
   ttsSettings: TTSSettings;
   language: Language;
   onWordClick: (word: string, event: React.MouseEvent<HTMLSpanElement>) => void;
+  onFallback: () => void;
+  onVoxtralVoiceResolved?: (language: Language, voiceId: string) => void;
+  isActiveSurface: boolean;
+  isAutoReadReady: boolean;
 }
 
-const Article: React.FC<ArticleProps> = ({ title, content, level, ttsSettings, language, onWordClick }) => {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const autoPlayTriggered = useRef(false);
-  const isMounted = useRef(true);
+const Article: React.FC<ArticleProps> = ({
+  title,
+  content,
+  level,
+  ttsSettings,
+  language,
+  onWordClick,
+  onFallback,
+  onVoxtralVoiceResolved,
+  isActiveSurface,
+  isAutoReadReady,
+}) => {
+  const [playback, setPlayback] = useState<PlaybackSnapshot>(() => ttsService.getPlaybackSnapshot());
+  const autoReadTimerRef = useRef<number | null>(null);
+  const autoReadTriggeredRef = useRef(false);
+  const titleSegments = useMemo(
+    () => createSpeechSegments(title, language, 'article-title'),
+    [language, title],
+  );
+  const paragraphs = useMemo(
+    () => content.split('\n').flatMap((paragraph, paragraphIndex) => {
+      if (!paragraph.trim()) return [];
+      return [{
+        key: `article-paragraph-${paragraphIndex}`,
+        segments: createSpeechSegments(paragraph, language, `article-body-${paragraphIndex}`),
+      }];
+    }),
+    [content, language],
+  );
+  const playbackSegments = useMemo(
+    () => [...titleSegments, ...paragraphs.flatMap(({ segments }) => segments)]
+      .filter(({ spokenText }) => spokenText.length > 0),
+    [paragraphs, titleSegments],
+  );
 
-  // Tracks the global character index where playback is currently at
-  const playbackIndexRef = useRef(0);
-  // Tracks the starting offset of the current utterance (used when resuming)
-  const playbackOffsetRef = useRef(0);
+  useEffect(() => ttsService.subscribeToPlayback(setPlayback), []);
 
-  // Reset trackers when content changes
-  useEffect(() => {
-    playbackIndexRef.current = 0;
-    playbackOffsetRef.current = 0;
-  }, [title, content]);
-
-  const makeWordsClickable = (text: string) => {
-    const segments = segmentText(text, language);
-
-    return segments.map((segment, arrayIndex) => {
-      const { text: word, isWord } = segment;
-      const cleaned = cleanWord(word);
-
-      return (
-        <span
-          key={`word-${arrayIndex}`}
-          className={`
-            ${isWord ? "cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded-md transition-colors duration-100 px-1 py-0.5 -mx-1 -my-0.5" : ""}
-          `}
-          onClick={(e) => {
-            if (isWord) {
-              // Stop playback if active so user can hear the word
-              if (isPlaying) {
-                ttsService.stopSpeech();
-                setIsPlaying(false);
-                setIsPaused(true); // Mark as "paused" UI-wise, though technically stopped
-              }
-              onWordClick(cleaned, e);
-            }
-          }}
-        >
-          {word}
-        </span>
-      );
-    });
-  };
-
-  const handlePlay = () => {
-    if (isPlaying && !isPaused) {
-      return;
-    }
-
-    console.log(`▶️ Play / Resume clicked.Resume index: ${playbackIndexRef.current} `);
-    setIsPlaying(true);
-    setIsPaused(false);
-
-    const fullText = `${title}. ${content} `;
-
-    // Determine where to start: from 0 or from the last stopped position
-    const startIndex = playbackIndexRef.current;
-
-    // If we are near the end, just restart. Otherwise slice.
-    const textToSpeak = (startIndex > 0 && startIndex < fullText.length - 5)
-      ? fullText.substring(startIndex)
-      : fullText;
-
-    // If we restart from 0, reset offset. If we resume, offset is the start index.
-    playbackOffsetRef.current = (startIndex > 0 && startIndex < fullText.length - 5) ? startIndex : 0;
-
-    if (playbackOffsetRef.current === 0) {
-      playbackIndexRef.current = 0;
-    }
-
-    ttsService.speak(
-      textToSpeak,
-      ttsSettings.voice,
-      ttsSettings.speed,
-      language,
-      () => {
-        console.log('🎵 Playback ended normally');
-        if (isMounted.current) {
-          // Robustness check: If browser says it's still speaking, don't reset state.
-          // This fixes the issue where onEnd fires prematurely on some browsers/resumes.
-          if (window.speechSynthesis.speaking) {
-            console.warn('⚠️ [Article] onEnd fired but still speaking - ignoring');
-            return;
-          }
-          setIsPlaying(false);
-          setIsPaused(false);
-          // Reset index on completion
-          playbackIndexRef.current = 0;
-          playbackOffsetRef.current = 0;
-        }
-      },
-      (charIndex) => {
-        // Update the global index: Offset (start of this chunk) + current chunk progress
-        playbackIndexRef.current = playbackOffsetRef.current + charIndex;
-      }
-    ).catch(error => {
-      console.error('❌ TTS Error:', error);
-      if (isMounted.current) {
-        setIsPlaying(false);
-        setIsPaused(false);
-      }
-    });
-  };
-
-  const handlePauseResume = () => {
-    if (isPaused) {
-      // Resume: Since we "stopped" to pause, we just restart playback.
-      // handlePlay() will pick up from playbackIndexRef.current.
-      handlePlay();
-    } else {
-      // Pause: We simulate pause by stopping speech but keeping the "Paused" UI state.
-      // This avoids unreliable native browser pause/resume behavior.
-      ttsService.stopSpeech();
-      setIsPlaying(false);
-      setIsPaused(true);
-    }
-  };
-
-  const handleStop = () => {
-    console.log('⏹️ Stop button clicked');
+  useEffect(() => () => {
     ttsService.stopSpeech();
-    setIsPlaying(false);
-    setIsPaused(false);
-    playbackIndexRef.current = 0;
-    playbackOffsetRef.current = 0;
-  };
+  }, [content, language, title]);
+
+  const cancelPendingAutoRead = useCallback((markTriggered = true) => {
+    if (autoReadTimerRef.current !== null) {
+      window.clearTimeout(autoReadTimerRef.current);
+      autoReadTimerRef.current = null;
+    }
+    if (markTriggered) autoReadTriggeredRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    cancelPendingAutoRead(false);
+    autoReadTriggeredRef.current = false;
+    return () => cancelPendingAutoRead(false);
+  }, [cancelPendingAutoRead, content, language, title]);
+
+  const playSegments = useCallback(() => {
+    if (!isActiveSurface || playbackSegments.length === 0) return;
+    void ttsService.speakSegments({
+      ownerId: ARTICLE_PLAYBACK_OWNER,
+      segments: playbackSegments,
+      language,
+      settings: ttsSettings,
+      onFallback,
+      ...(onVoxtralVoiceResolved ? { onVoxtralVoiceResolved } : {}),
+    }).catch((error: unknown) => {
+      console.error('TTS playback failed', error);
+    });
+  }, [isActiveSurface, language, onFallback, onVoxtralVoiceResolved, playbackSegments, ttsSettings]);
+
+  const play = useCallback(() => {
+    cancelPendingAutoRead();
+    playSegments();
+  }, [cancelPendingAutoRead, playSegments]);
+
+  useEffect(() => {
+    cancelPendingAutoRead(false);
+    if (!isActiveSurface) {
+      cancelPendingAutoRead();
+      return undefined;
+    }
+    if (
+      !isAutoReadReady
+      || !ttsSettings.autoRead
+      || playbackSegments.length === 0
+      || autoReadTriggeredRef.current
+    ) return undefined;
+
+    autoReadTimerRef.current = window.setTimeout(() => {
+      autoReadTimerRef.current = null;
+      if (autoReadTriggeredRef.current) return;
+      autoReadTriggeredRef.current = true;
+      playSegments();
+    }, 800);
+
+    return () => cancelPendingAutoRead(false);
+  }, [
+    cancelPendingAutoRead,
+    isActiveSurface,
+    isAutoReadReady,
+    playSegments,
+    playbackSegments.length,
+    ttsSettings.autoRead,
+  ]);
+
+  const handleWordClick = useCallback((word: string, event: React.MouseEvent<HTMLSpanElement>) => {
+    cancelPendingAutoRead();
+    ttsService.stopSpeech();
+    onWordClick(word, event);
+  }, [cancelPendingAutoRead, onWordClick]);
+
+  const handlePause = useCallback(() => {
+    cancelPendingAutoRead();
+    ttsService.pauseSpeech();
+  }, [cancelPendingAutoRead]);
+
+  const handleResume = useCallback(() => {
+    cancelPendingAutoRead();
+    ttsService.resumeSpeech();
+  }, [cancelPendingAutoRead]);
+
+  const handleStop = useCallback(() => {
+    cancelPendingAutoRead();
+    ttsService.stopSpeech();
+  }, [cancelPendingAutoRead]);
+
+  const ownsPlayback = playback.ownerId === ARTICLE_PLAYBACK_OWNER;
+  const isActive = isActiveSurface && ownsPlayback && playback.status !== 'idle';
+  const isPaused = isActive && playback.status === 'paused';
 
   return (
     <div className="bg-white dark:bg-gray-800 p-6 md:p-8 rounded-lingoblitz shadow-lg max-w-4xl w-full">
@@ -157,12 +161,13 @@ const Article: React.FC<ArticleProps> = ({ title, content, level, ttsSettings, l
         </div>
 
         <div className="flex items-center gap-2">
-          {isPlaying || isPaused ? (
+          {isActive ? (
             <>
               <button
-                onClick={handlePauseResume}
+                type="button"
+                onClick={isPaused ? handleResume : handlePause}
                 className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
-                title={isPaused ? "Resume" : "Pause"}
+                title={isPaused ? 'Resume' : 'Pause'}
               >
                 {isPaused ? (
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -176,6 +181,7 @@ const Article: React.FC<ArticleProps> = ({ title, content, level, ttsSettings, l
                 )}
               </button>
               <button
+                type="button"
                 onClick={handleStop}
                 className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
                 title="Stop"
@@ -188,7 +194,9 @@ const Article: React.FC<ArticleProps> = ({ title, content, level, ttsSettings, l
             </>
           ) : (
             <button
-              onClick={handlePlay}
+              type="button"
+              onClick={play}
+              disabled={!isActiveSurface || playbackSegments.length === 0}
               className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors duration-200"
               title="Play"
             >
@@ -201,18 +209,25 @@ const Article: React.FC<ArticleProps> = ({ title, content, level, ttsSettings, l
       </div>
 
       <h2 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white mb-6">
-        {makeWordsClickable(title)}
+        <SpeakableText
+          segments={titleSegments}
+          language={language}
+          activeSegmentId={ownsPlayback ? playback.activeSegmentId : null}
+          onWordClick={handleWordClick}
+        />
       </h2>
 
       <div className="font-aleo text-lg md:text-xl leading-relaxed text-gray-700 dark:text-gray-300 space-y-4">
-        {content.split('\n').map((paragraph, pIndex) => {
-          if (!paragraph.trim()) return null;
-          return (
-            <p key={`p - ${pIndex} `}>
-              {makeWordsClickable(paragraph)}
-            </p>
-          );
-        })}
+        {paragraphs.map(({ key, segments }) => (
+          <p key={key}>
+            <SpeakableText
+              segments={segments}
+              language={language}
+              activeSegmentId={ownsPlayback ? playback.activeSegmentId : null}
+              onWordClick={handleWordClick}
+            />
+          </p>
+        ))}
       </div>
     </div>
   );

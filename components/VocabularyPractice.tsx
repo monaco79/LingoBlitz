@@ -1,9 +1,11 @@
 // Last updated: 2025-11-15 18:15
 // Design update: Gradient flashcard, white buttons with red/green borders, progress bar
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { VocabularyItem, TTSSettings, Language } from '../types';
 import * as ttsService from '../services/ttsService';
+import type { PlaybackSnapshot } from '../services/tts/playbackController';
+import { createSpeechSegments } from '../services/tts/textSegments';
 import Confetti from './Confetti';
 
 interface VocabularyPracticeProps {
@@ -11,59 +13,77 @@ interface VocabularyPracticeProps {
   onComplete: () => void;
   learningLanguage: Language;
   ttsSettings: TTSSettings;
+  onFallback: () => void;
+  onVoxtralVoiceResolved?: (language: Language, voiceId: string) => void;
 }
 
-const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({ vocabulary, onComplete, learningLanguage, ttsSettings }) => {
-  const [wordsToPractice, setWordsToPractice] = useState<VocabularyItem[]>([]);
+type PracticeCard = VocabularyItem & { speechIdPrefix: string };
+
+const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({
+  vocabulary,
+  onComplete,
+  learningLanguage,
+  ttsSettings,
+  onFallback,
+  onVoxtralVoiceResolved,
+}) => {
+  const nextSpeechId = useRef(0);
+  const buildPracticeCards = (items: VocabularyItem[]): PracticeCard[] => items.map((item) => ({
+    ...item,
+    speechIdPrefix: `vocabulary-card-${nextSpeechId.current++}`,
+  }));
+  const [wordsToPractice, setWordsToPractice] = useState<PracticeCard[]>(
+    () => buildPracticeCards(vocabulary).sort(() => Math.random() - 0.5),
+  );
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
-  const [totalPracticedWords, setTotalPracticedWords] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const isMounted = useRef(true);
+  const [totalPracticedWords, setTotalPracticedWords] = useState(vocabulary.length);
+  const [playback, setPlayback] = useState<PlaybackSnapshot>(() => ttsService.getPlaybackSnapshot());
 
-  useEffect(() => {
-    isMounted.current = true;
-    return () => {
-      isMounted.current = false;
-      ttsService.stopSpeech();
-    };
-  }, []);
+  useEffect(() => ttsService.subscribeToPlayback(setPlayback), []);
+
+  useEffect(() => () => {
+    ttsService.stopSpeech();
+  }, [learningLanguage, vocabulary]);
 
   useEffect(() => {
     // Shuffle the initial vocabulary for variety and reset state on new vocab list
-    setWordsToPractice([...vocabulary].sort(() => Math.random() - 0.5));
+    setWordsToPractice(buildPracticeCards(vocabulary).sort(() => Math.random() - 0.5));
     setCurrentIndex(0);
     setIsFlipped(false);
     setShowConfetti(false);
     setTotalPracticedWords(vocabulary.length);
   }, [vocabulary]);
 
-  // Auto-read logic
+  const currentItem = wordsToPractice.length > 0 ? wordsToPractice[currentIndex] : null;
+  const wordSegments = useMemo(
+    () => currentItem
+      ? createSpeechSegments(currentItem.word, learningLanguage, currentItem.speechIdPrefix)
+      : [],
+    [currentItem, learningLanguage],
+  );
+
   useEffect(() => {
-    const currentWord = wordsToPractice[currentIndex];
-    if (currentWord && ttsSettings?.autoRead && !showConfetti) {
-      // Stop any previous speech before starting new one
-      ttsService.stopSpeech();
+    if (!currentItem || !ttsSettings.autoRead || showConfetti) return undefined;
+    const timer = window.setTimeout(() => {
+      void ttsService.speakSegments({
+        ownerId: currentItem.speechIdPrefix,
+        segments: wordSegments.filter(({ spokenText }) => spokenText.length > 0),
+        language: learningLanguage,
+        settings: ttsSettings,
+        onFallback,
+        ...(onVoxtralVoiceResolved ? { onVoxtralVoiceResolved } : {}),
+      }).catch((error: unknown) => {
+        console.error('TTS playback failed', error);
+      });
+    }, 300);
 
-      // Small delay to ensure smooth transition
-      const timer = setTimeout(() => {
-        if (isMounted.current) {
-          ttsService.speak(
-            currentWord.word,
-            ttsSettings.voice,
-            ttsSettings.speed,
-            learningLanguage as any, // Cast to Language enum type
-            () => setIsPlaying(false)
-          );
-        }
-      }, 300);
-
-      return () => clearTimeout(timer);
-    }
-  }, [currentIndex, wordsToPractice, ttsSettings, showConfetti]);
+    return () => window.clearTimeout(timer);
+  }, [currentItem, learningLanguage, onFallback, onVoxtralVoiceResolved, showConfetti, ttsSettings, wordSegments]);
 
   const handleKnownWord = () => {
+    ttsService.stopSpeech();
     // If this is the last word, trigger confetti and finish
     if (wordsToPractice.length === 1) {
       setShowConfetti(true);
@@ -82,6 +102,7 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({ vocabulary, onC
   };
 
   const handleUnknownWord = () => {
+    ttsService.stopSpeech();
     // Go to the next word in the current list
     setCurrentIndex(prevIndex => (prevIndex + 1) % wordsToPractice.length);
     setIsFlipped(false);
@@ -99,9 +120,12 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({ vocabulary, onC
     );
   }
 
-  const currentItem = wordsToPractice.length > 0 ? wordsToPractice[currentIndex] : null;
   const isLastWordInRound = wordsToPractice.length === 1;
   const progress = totalPracticedWords > 0 ? ((totalPracticedWords - wordsToPractice.length) / totalPracticedWords) * 100 : 0;
+  const isCardActive = wordSegments.some(
+    ({ visibleSentenceId }) => currentItem?.speechIdPrefix === playback.ownerId
+      && visibleSentenceId === playback.activeSegmentId,
+  );
 
   return (
     <div className="w-full max-w-4xl p-6 md:p-8 bg-white dark:bg-gray-800 rounded-lingoblitz shadow-lg flex flex-col items-center gap-6 relative">
@@ -142,6 +166,10 @@ const VocabularyPractice: React.FC<VocabularyPracticeProps> = ({ vocabulary, onC
               >
                 {/* Front: Shows WORD in learning language with gradient background */}
                 <div
+                  data-testid="vocabulary-card-front"
+                  data-visible-sentence-id={wordSegments[0]?.visibleSentenceId}
+                  data-active-sentence={isCardActive ? 'true' : undefined}
+                  aria-current={isCardActive ? 'true' : undefined}
                   className="absolute w-full h-full flex flex-col items-center justify-center gradient-lingoblitz rounded-lingoblitz p-6 text-center shadow-lg"
                   style={{ backfaceVisibility: 'hidden' }}
                 >

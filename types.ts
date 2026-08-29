@@ -37,8 +37,16 @@ export enum Topic {
   Economics = 'Economics',
 }
 
+export type TTSProvider = 'voxtral' | 'browser';
+
+export interface LanguageTTSPreference {
+  provider: TTSProvider;
+  voxtralVoiceId: string;
+  browserVoiceName: string;
+}
+
 export interface TTSSettings {
-  voice: string;
+  preferences: Partial<Record<Language, LanguageTTSPreference>>;
   speed: number;
   autoRead: boolean;
 }
@@ -67,6 +75,7 @@ export enum AppState {
 export interface TranslationPopup {
   word: string;
   translation: string;
+  speechIdPrefix: string;
   position: {
     top: number;
     left: number;
@@ -76,10 +85,4 @@ export interface TranslationPopup {
 export interface VocabularyItem {
   word: string;
   translation: string;
-}
-
-export interface AzureVoice {
-  name: string;
-  displayName: string;
-  locale: string;
 }

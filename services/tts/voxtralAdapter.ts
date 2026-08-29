@@ -1,0 +1,392 @@
+import type { Language } from '../../types';
+import { AudioCache, type AudioCacheLease } from './audioCache';
+import { normalizeSpeechText } from './textSegments';
+import {
+  TTSAdapterError,
+  type AdapterContext,
+  type PlaybackUnit,
+  type SpeechAdapter,
+  type SpeechSegment,
+} from './types';
+import { fetchVoxtralAudio, type VoxtralAudioResult } from './voxtralApi';
+
+type FetchAudio = (
+  segment: SpeechSegment,
+  language: Language,
+  voiceId: string,
+  signal?: AbortSignal,
+) => Promise<Blob | VoxtralAudioResult>;
+
+export interface VoxtralSpeechAdapterOptions {
+  cache: AudioCache;
+  fetchAudio?: FetchAudio;
+  createAudio?: () => HTMLAudioElement;
+  createObjectURL?: (blob: Blob) => string;
+  revokeObjectURL?: (url: string) => void;
+}
+
+interface QueuedSynthesis {
+  cancelled: boolean;
+  start(): void;
+}
+
+class SynthesisLimiter {
+  private active = 0;
+  private readonly queue: QueuedSynthesis[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  run<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) return Promise.reject(cancelledError());
+
+    return new Promise<T>((resolve, reject) => {
+      let started = false;
+      const task: QueuedSynthesis = {
+        cancelled: false,
+        start: () => {
+          if (task.cancelled) return;
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          started = true;
+          signal.removeEventListener('abort', onAbort);
+          this.active += 1;
+          let operation: Promise<T>;
+          try {
+            operation = work();
+          } catch (error) {
+            reject(error);
+            this.release();
+            return;
+          }
+          void operation.then(
+            (value) => {
+              resolve(value);
+              this.release();
+            },
+            (error: unknown) => {
+              reject(error);
+              this.release();
+            },
+          );
+        },
+      };
+      const onAbort = () => {
+        if (started || task.cancelled) return;
+        task.cancelled = true;
+        signal.removeEventListener('abort', onAbort);
+        reject(cancelledError());
+        this.drain();
+      };
+
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.queue.push(task);
+      this.drain();
+    });
+  }
+
+  private release(): void {
+    this.active -= 1;
+    this.drain();
+  }
+
+  private drain(): void {
+    while (this.active < this.limit && this.queue.length > 0) {
+      const task = this.queue.shift();
+      if (!task || task.cancelled) continue;
+      task.start();
+    }
+  }
+}
+
+interface InFlightGeneration {
+  controller: AbortController;
+  consumers: number;
+  promise: Promise<GeneratedAudio>;
+  settled: boolean;
+}
+
+interface GeneratedAudio {
+  blob: Blob;
+  cacheKey: string;
+}
+
+const silentUnit = (): PlaybackUnit => ({
+  started: Promise.resolve(),
+  play: async () => undefined,
+  pause: () => undefined,
+  resume: async () => undefined,
+  stop: () => undefined,
+  dispose: () => undefined,
+});
+
+const cancelledError = (): TTSAdapterError =>
+  new TTSAdapterError('cancelled', 'Voxtral playback was cancelled');
+
+const invalidAudioError = (): TTSAdapterError =>
+  new TTSAdapterError('invalid_audio', 'Voxtral audio playback failed');
+
+export const createVoxtralCacheKey = (segment: SpeechSegment, context: AdapterContext): string => [
+  context.language,
+  context.modelMarker,
+  context.voiceId,
+  normalizeSpeechText(segment.spokenText),
+].join('\u0000');
+
+export class VoxtralSpeechAdapter implements SpeechAdapter {
+  private readonly cache: AudioCache;
+  private readonly fetchAudio: FetchAudio;
+  private readonly createAudio: () => HTMLAudioElement;
+  private readonly inFlight = new Map<string, InFlightGeneration>();
+  private readonly synthesisLimiter = new SynthesisLimiter(3);
+  private serverModelMarker: string | null = null;
+
+  constructor(options: VoxtralSpeechAdapterOptions) {
+    this.cache = options.cache;
+    this.fetchAudio = options.fetchAudio ?? fetchVoxtralAudio;
+    this.createAudio = options.createAudio ?? (() => new Audio());
+  }
+
+  async prepare(
+    segment: SpeechSegment,
+    context: AdapterContext,
+    signal: AbortSignal,
+  ): Promise<PlaybackUnit> {
+    const normalizedText = normalizeSpeechText(segment.spokenText);
+    if (!normalizedText) {
+      return silentUnit();
+    }
+    if (signal.aborted) {
+      throw cancelledError();
+    }
+
+    const normalizedSegment = normalizedText === segment.spokenText
+      ? segment
+      : { ...segment, spokenText: normalizedText };
+    const lookupContext = this.serverModelMarker
+      ? { ...context, modelMarker: this.serverModelMarker }
+      : context;
+    let cacheKey = createVoxtralCacheKey(normalizedSegment, lookupContext);
+    let lease = this.cache.acquire(cacheKey);
+
+    if (!lease) {
+      let generated: GeneratedAudio;
+      try {
+        generated = await this.generateCoalesced(cacheKey, normalizedSegment, context, signal);
+      } catch (error) {
+        if (error instanceof TTSAdapterError) throw error;
+        if (signal.aborted) throw cancelledError();
+        throw new TTSAdapterError('upstream', 'Voxtral audio request failed');
+      }
+      if (signal.aborted) {
+        throw cancelledError();
+      }
+
+      cacheKey = generated.cacheKey;
+      lease = this.cache.acquire(cacheKey) ?? this.cache.setAndAcquire(cacheKey, generated.blob);
+    }
+
+    let audio: HTMLAudioElement;
+    try {
+      audio = this.createAudio();
+    } catch {
+      lease.release();
+      throw invalidAudioError();
+    }
+    audio.src = lease.url;
+    audio.playbackRate = context.speed;
+
+    let playback: Promise<void> | null = null;
+    let resolvePlayback: (() => void) | null = null;
+    let rejectPlayback: ((error: Error) => void) | null = null;
+    let resolveStarted!: () => void;
+    let rejectStarted!: (error: Error) => void;
+    let startedSettled = false;
+    let stopped = false;
+    let disposed = false;
+    const started = new Promise<void>((resolve, reject) => {
+      resolveStarted = resolve;
+      rejectStarted = reject;
+    });
+    void started.catch(() => undefined);
+
+    const settleStarted = (error?: Error) => {
+      if (startedSettled) return;
+      startedSettled = true;
+      error ? rejectStarted(error) : resolveStarted();
+    };
+
+    const settle = (error?: Error) => {
+      if (!resolvePlayback) return;
+      const resolve = resolvePlayback;
+      const reject = rejectPlayback;
+      resolvePlayback = null;
+      rejectPlayback = null;
+      error ? reject?.(error) : resolve();
+    };
+    const onPlaying = () => {
+      if (!stopped) settleStarted();
+    };
+    const onEnded = () => {
+      if (!startedSettled) {
+        const error = invalidAudioError();
+        settleStarted(error);
+        settle(error);
+        return;
+      }
+      settle();
+    };
+    const onError = () => {
+      const error = invalidAudioError();
+      settleStarted(error);
+      settle(error);
+    };
+    const halt = () => {
+      audio.pause();
+      audio.currentTime = 0;
+    };
+    const onAbort = () => {
+      if (stopped) return;
+      stopped = true;
+      halt();
+      settleStarted();
+      settle(cancelledError());
+    };
+
+    audio.addEventListener('playing', onPlaying);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
+    signal.addEventListener('abort', onAbort, { once: true });
+
+    return {
+      started,
+      play: () => {
+        if (playback) return playback;
+        if (signal.aborted) return Promise.reject(cancelledError());
+        if (stopped) return Promise.resolve();
+
+        playback = new Promise<void>((resolve, reject) => {
+          resolvePlayback = resolve;
+          rejectPlayback = reject;
+          try {
+            void Promise.resolve(audio.play()).catch(() => {
+              const error = invalidAudioError();
+              settleStarted(error);
+              settle(error);
+            });
+          } catch {
+            const error = invalidAudioError();
+            settleStarted(error);
+            settle(error);
+          }
+        });
+        return playback;
+      },
+      pause: () => {
+        if (!stopped) audio.pause();
+      },
+      resume: async () => {
+        if (stopped) return;
+        try {
+          await audio.play();
+        } catch {
+          const error = invalidAudioError();
+          settleStarted(error);
+          settle(error);
+          throw error;
+        }
+      },
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        halt();
+        settleStarted();
+        settle();
+      },
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        audio.removeEventListener('playing', onPlaying);
+        audio.removeEventListener('ended', onEnded);
+        audio.removeEventListener('error', onError);
+        signal.removeEventListener('abort', onAbort);
+        settleStarted();
+        settle();
+        lease.release();
+      },
+    };
+  }
+
+  private generateCoalesced(
+    cacheKey: string,
+    segment: SpeechSegment,
+    context: AdapterContext,
+    signal: AbortSignal,
+  ): Promise<GeneratedAudio> {
+    let generation = this.inFlight.get(cacheKey);
+    if (!generation) {
+      const controller = new AbortController();
+      generation = {
+        controller,
+        consumers: 0,
+        promise: this.synthesisLimiter.run(
+          () => this.fetchAudio(segment, context.language, context.voiceId, controller.signal),
+          controller.signal,
+        ).then((result) => {
+          const isServerResult = !(result instanceof Blob);
+          const blob = isServerResult ? result.blob : result;
+          const modelMarker = isServerResult ? result.modelMarker.trim() : context.modelMarker;
+          if (!modelMarker) {
+            throw new TTSAdapterError('invalid_audio', 'Voxtral returned invalid audio');
+          }
+          if (isServerResult) this.serverModelMarker = modelMarker;
+          const resolvedCacheKey = createVoxtralCacheKey(
+            segment,
+            { ...context, modelMarker },
+          );
+          if (this.cache.get(resolvedCacheKey) === undefined) {
+            this.cache.set(resolvedCacheKey, blob);
+          }
+          return { blob, cacheKey: resolvedCacheKey };
+        }),
+        settled: false,
+      };
+      this.inFlight.set(cacheKey, generation);
+      const completedGeneration = generation;
+      const settle = () => {
+        completedGeneration.settled = true;
+        if (this.inFlight.get(cacheKey) === completedGeneration) this.inFlight.delete(cacheKey);
+      };
+      void generation.promise.then(settle, settle);
+    }
+
+    return this.consumeGeneration(generation, signal);
+  }
+
+  private consumeGeneration(generation: InFlightGeneration, signal: AbortSignal): Promise<GeneratedAudio> {
+    if (signal.aborted) return Promise.reject(cancelledError());
+    generation.consumers += 1;
+
+    const result = new Promise<GeneratedAudio>((resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        callback();
+      };
+      const onAbort = () => finish(() => reject(cancelledError()));
+      signal.addEventListener('abort', onAbort, { once: true });
+      void generation.promise.then(
+        (generated) => finish(() => resolve(generated)),
+        (error: unknown) => finish(() => reject(error)),
+      );
+    });
+
+    return result.finally(() => {
+      generation.consumers -= 1;
+      if (generation.consumers === 0 && !generation.settled) generation.controller.abort();
+    });
+  }
+}
