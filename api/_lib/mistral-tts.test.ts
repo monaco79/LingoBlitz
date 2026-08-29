@@ -25,11 +25,17 @@ test('lists preset voices with Mistral bearer authentication', async () => {
   let request: { input: RequestInfo | URL; init?: RequestInit } | undefined;
   const voices = await listPresetVoices(config, (async (input, init) => {
     request = { input, init };
-    return Response.json({ data: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }] });
+    return Response.json({
+      items: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }],
+      total: 1,
+      page: 1,
+      page_size: 1000,
+      total_pages: 1,
+    });
   }) as typeof fetch);
 
   assert.deepEqual(voices, [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }]);
-  assert.equal(request?.input, 'https://api.mistral.ai/v1/audio/voices?type=preset&limit=1000');
+  assert.equal(request?.input, 'https://api.mistral.ai/v1/audio/voices?limit=1000&offset=0');
   assert.equal(request?.init?.method, 'GET');
   assert.equal((request?.init?.headers as Headers).get('authorization'), 'Bearer test-secret-key');
 });
@@ -39,7 +45,7 @@ test('caches the complete preset voice list for fifteen minutes', async () => {
   let upstreamCalls = 0;
   const fetchImpl = (async () => {
     upstreamCalls += 1;
-    return Response.json({ data: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }] });
+    return Response.json({ items: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }] });
   }) as typeof fetch;
 
   try {
@@ -72,7 +78,7 @@ test('promise-coalesces concurrent cold preset voice fills', async () => {
     const first = getCachedPresetVoices(config, fetchImpl, 1_000);
     const second = getCachedPresetVoices(config, fetchImpl, 1_000);
     assert.equal(upstreamCalls, 1);
-    resolveResponse(Response.json({ data: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }] }));
+    resolveResponse(Response.json({ items: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }] }));
     assert.deepEqual(await first, [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }]);
     assert.deepEqual(await second, await first);
   } finally {
@@ -85,7 +91,7 @@ test('classifies an external abort before preset validation without calling upst
   let upstreamCalls = 0;
   const fetchImpl = (async () => {
     upstreamCalls += 1;
-    return Response.json({ data: [] });
+    return Response.json({ items: [] });
   }) as typeof fetch;
   controller.abort();
 
@@ -266,7 +272,7 @@ test('rejects invalid JSON and Base64 audio with safe invalid-response errors', 
 
 test('rejects voice records missing required Mistral fields', async () => {
   await assert.rejects(
-    listPresetVoices(config, fetchStub(Response.json({ data: [{ id: 'voice-1', name: '', languages: ['en'] }] }))),
+    listPresetVoices(config, fetchStub(Response.json({ items: [{ id: 'voice-1', name: '', languages: ['en'] }] }))),
     (error: unknown) => error instanceof TTSError && error.category === 'invalid_response',
   );
 });

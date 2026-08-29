@@ -177,8 +177,8 @@ function decodeBase64(value: string): Uint8Array {
 }
 
 function parseVoices(payload: unknown): MistralVoice[] {
-  const data = payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data)
-    ? (payload as { data: unknown[] }).data
+  const data = payload && typeof payload === 'object' && Array.isArray((payload as { items?: unknown }).items)
+    ? (payload as { items: unknown[] }).items
     : null;
 
   if (!data) {
@@ -218,7 +218,7 @@ export async function listPresetVoices(
 ): Promise<MistralVoice[]> {
   const payload = await requestJson(
     config,
-    '/audio/voices?type=preset&limit=1000',
+    '/audio/voices?limit=1000&offset=0',
     { method: 'GET' },
     fetchImpl,
     signal,
