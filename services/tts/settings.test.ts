@@ -23,19 +23,25 @@ describe('TTS settings migration', () => {
     expect(migrateTTSSettings({ speed: 1.8 }, Language.German).speed).toBe(1.4);
   });
 
-  it('migrates a legacy browser voice while selecting Voxtral for supported languages', () => {
+  it('migrates a legacy browser voice while keeping the browser provider as default', () => {
     const migrated = migrateTTSSettings(
       { voice: 'Google Deutsch', speed: 0.8, autoRead: true },
       Language.German,
     );
 
     expect(getTTSPreference(migrated, Language.German)).toEqual({
-      provider: 'voxtral',
+      provider: 'browser',
       voxtralVoiceId: '',
       browserVoiceName: 'Google Deutsch',
     });
     expect(migrated.speed).toBe(0.8);
     expect(migrated.autoRead).toBe(true);
+  });
+
+  it('defaults Voxtral-supported languages to the browser provider', () => {
+    expect(
+      getTTSPreference(createDefaultTTSSettings(Language.German), Language.German).provider,
+    ).toBe('browser');
   });
 
   it('defaults unsupported languages to the browser provider', () => {
@@ -121,7 +127,7 @@ describe('TTS settings migration', () => {
     expect(migrated.speed).toBe(1);
     expect(migrated.autoRead).toBe(false);
     expect(getTTSPreference(migrated, Language.German)).toEqual({
-      provider: 'voxtral',
+      provider: 'browser',
       voxtralVoiceId: '',
       browserVoiceName: '',
     });

@@ -51,7 +51,8 @@ describe('Onboarding voice settings integration', () => {
     await user.click(screen.getByRole('button', { name: Topic.Travel }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
 
-    expect((screen.getByRole('radio', { name: 'Voxtral' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('radio', { name: 'Browser' }) as HTMLInputElement).checked).toBe(true);
+    await user.click(screen.getByRole('radio', { name: 'Voxtral' }));
     expect(await screen.findByRole('option', { name: 'Spanish One' })).not.toBeNull();
     expect((screen.getByRole('slider', { name: /Speed:/ }) as HTMLInputElement).value)
       .toBe(String(LEVEL_TTS_SPEEDS[Level.B2]));
@@ -68,6 +69,7 @@ describe('Onboarding voice settings integration', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
 
+    await user.click(screen.getByRole('radio', { name: 'Voxtral' }));
     expect(await screen.findByRole('option', { name: 'German One' })).not.toBeNull();
     await waitFor(() => {
       expect((screen.getByRole('button', { name: 'Start Learning!' }) as HTMLButtonElement).disabled).toBe(false);

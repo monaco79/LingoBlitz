@@ -103,7 +103,7 @@ describe('App TTS integration', () => {
       settings: {
         preferences: {
           [Language.German]: {
-            provider: 'voxtral',
+            provider: 'browser',
             voxtralVoiceId: '',
             browserVoiceName: 'Legacy Anna',
           },
@@ -240,6 +240,7 @@ describe('App TTS integration', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: Topic.Travel }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('radio', { name: 'Voxtral' }));
     await screen.findByRole('option', { name: 'Spanish One' });
     await user.click(screen.getByRole('button', { name: 'Play sample' }));
 

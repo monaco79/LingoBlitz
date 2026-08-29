@@ -33,6 +33,18 @@ const browserVoice = (name: string, language: string): TTSVoiceOption => ({
   languages: [language],
 });
 
+const createVoxtralSettings = (language: Language, speed = 0.8): TTSSettings => ({
+  speed,
+  autoRead: false,
+  preferences: {
+    [language]: {
+      provider: 'voxtral',
+      voxtralVoiceId: '',
+      browserVoiceName: '',
+    },
+  },
+});
+
 interface HarnessProps {
   language?: Language;
   initialValue?: TTSSettings;
@@ -70,30 +82,19 @@ describe('VoiceSettings', () => {
     service.subscribeToVoiceChanges.mockReset().mockReturnValue(() => undefined);
   });
 
-  it('defaults Spanish to Voxtral, filters incompatible presets, and persists the first compatible voice', async () => {
-    const onValue = vi.fn();
+  it('defaults Spanish to Browser and loads browser voices', async () => {
     service.getVoicesForLanguage.mockResolvedValue([
-      voxtralVoice('french', 'French preset', ['fr']),
-      voxtralVoice('spanish', 'Spanish preset', ['es']),
-      voxtralVoice('spanish-mx', 'Spanish MX preset', ['es-MX']),
+      browserVoice('Monica', 'es-ES'),
+      browserVoice('Paulina', 'es-MX'),
     ]);
 
-    render(<Harness onValue={onValue} />);
+    render(<Harness />);
 
-    expect((screen.getByRole('radio', { name: 'Voxtral' }) as HTMLInputElement).checked).toBe(true);
-    expect(await screen.findByRole('option', { name: 'Spanish preset' })).not.toBeNull();
-    expect(screen.getByRole('option', { name: 'Spanish MX preset' })).not.toBeNull();
-    expect(screen.queryByRole('option', { name: 'French preset' })).toBeNull();
+    expect((screen.getByRole('radio', { name: 'Browser' }) as HTMLInputElement).checked).toBe(true);
+    expect(await screen.findByRole('option', { name: 'Monica (es-ES)' })).not.toBeNull();
+    expect(screen.getByRole('option', { name: 'Paulina (es-MX)' })).not.toBeNull();
     expect(screen.getByText(/spoken text is sent to Mistral/i)).not.toBeNull();
-    expect(service.getVoicesForLanguage).toHaveBeenCalledWith(
-      Language.Spanish,
-      'voxtral',
-      expect.any(AbortSignal),
-    );
-    await waitFor(() => {
-      expect(getTTSPreference(onValue.mock.calls.at(-1)?.[0], Language.Spanish).voxtralVoiceId)
-        .toBe('spanish');
-    });
+    expect(service.getVoicesForLanguage).toHaveBeenCalledWith(Language.Spanish, 'browser');
   });
 
   it('disables Voxtral and selects Browser for Japanese', async () => {
@@ -238,7 +239,7 @@ describe('VoiceSettings', () => {
         : Promise.resolve([browserVoice('Monica', 'es-ES')])
     ));
 
-    render(<Harness />);
+    render(<Harness initialValue={createVoxtralSettings(Language.Spanish)} />);
 
     expect(await screen.findByText('Voxtral voices could not be loaded.')).not.toBeNull();
     expect((screen.getByRole('radio', { name: 'Browser' }) as HTMLInputElement).disabled).toBe(false);
@@ -253,7 +254,12 @@ describe('VoiceSettings', () => {
       voxtralVoice('spanish', 'Spanish preset', ['es']),
     ]);
 
-    const { unmount } = render(<Harness onFallback={onFallback} />);
+    const { unmount } = render(
+      <Harness
+        initialValue={createVoxtralSettings(Language.Spanish)}
+        onFallback={onFallback}
+      />,
+    );
     await screen.findByRole('option', { name: 'Spanish preset' });
     await user.click(screen.getByRole('button', { name: 'Play sample' }));
 
@@ -319,7 +325,7 @@ describe('VoiceSettings', () => {
       <VoiceSettings
         language={Language.Spanish}
         level={Level.A2}
-        value={createDefaultTTSSettings(Language.Spanish)}
+        value={createVoxtralSettings(Language.Spanish)}
         onFallback={() => undefined}
         onChange={() => undefined}
       />,
@@ -328,7 +334,7 @@ describe('VoiceSettings', () => {
       <VoiceSettings
         language={Language.French}
         level={Level.A2}
-        value={createDefaultTTSSettings(Language.French)}
+        value={createVoxtralSettings(Language.French)}
         onFallback={() => undefined}
         onChange={() => undefined}
       />,

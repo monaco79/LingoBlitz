@@ -18,8 +18,8 @@ const normalizeSpeed = (speed: unknown): number =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const defaultPreference = (language: Language): LanguageTTSPreference => ({
-  provider: isVoxtralSupported(language) ? 'voxtral' : 'browser',
+const defaultPreference = (_language: Language): LanguageTTSPreference => ({
+  provider: 'browser',
   voxtralVoiceId: '',
   browserVoiceName: '',
 });
