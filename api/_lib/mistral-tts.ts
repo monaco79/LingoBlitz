@@ -8,6 +8,11 @@ export interface MistralVoice {
   description?: string;
 }
 
+export function voiceSupportsLanguage(voice: MistralVoice, languageCode: string): boolean {
+  return voice.languages.length === 0
+    || voice.languages.some((language) => language.toLowerCase() === languageCode.toLowerCase());
+}
+
 export type TTSErrorCategory =
   | 'disabled'
   | 'configuration'

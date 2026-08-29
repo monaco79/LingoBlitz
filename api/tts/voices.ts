@@ -1,4 +1,9 @@
-import { getCachedPresetVoices, TTSError, type MistralVoice } from '../_lib/mistral-tts';
+import {
+  getCachedPresetVoices,
+  TTSError,
+  voiceSupportsLanguage,
+  type MistralVoice,
+} from '../_lib/mistral-tts';
 import { resolveTTSConfig, type TTSConfig } from '../_lib/tts-config';
 import { toMistralLanguageCode } from '../../services/tts/languageConfig';
 import type { Language } from '../../types';
@@ -77,7 +82,7 @@ export function createVoicesHandler(dependencies: VoicesHandlerDependencies = {}
     try {
       const voices = await readVoices(ttsConfig);
       const compatibleVoices = voices
-        .filter((voice) => voice.languages.some((voiceLanguage) => voiceLanguage.toLowerCase() === languageCode.toLowerCase()))
+        .filter((voice) => voiceSupportsLanguage(voice, languageCode))
         .map((voice) => ({
           id: voice.id,
           name: voice.name,

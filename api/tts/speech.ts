@@ -2,6 +2,7 @@ import {
   generateSpeech,
   getCachedPresetVoices,
   TTSError,
+  voiceSupportsLanguage,
   type MistralVoice,
 } from '../_lib/mistral-tts';
 import { resolveTTSConfig, type TTSConfig } from '../_lib/tts-config';
@@ -191,7 +192,7 @@ export function createSpeechHandler(dependencies: SpeechHandlerDependencies = {}
       const voices = await readVoices(ttsConfig, request.signal);
       throwIfAborted(request.signal);
       const selectedVoice = voices.find((voice) => voice.id === voiceId);
-      if (!selectedVoice || !selectedVoice.languages.some((voiceLanguage) => voiceLanguage.toLowerCase() === languageCode.toLowerCase())) {
+      if (!selectedVoice || !voiceSupportsLanguage(selectedVoice, languageCode)) {
         return finish(invalidRequestResponse(), 'invalid_request');
       }
 

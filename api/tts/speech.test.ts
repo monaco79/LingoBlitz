@@ -14,6 +14,7 @@ const enabledConfig: TTSConfig = {
 
 const presetVoices: MistralVoice[] = [
   { id: 'de-1', name: 'Anna', languages: ['de'], gender: 'female' },
+  { id: 'global-1', name: 'Multilingual', languages: [] },
   { id: 'en-1', name: 'James', languages: ['en'] },
 ];
 
@@ -92,6 +93,16 @@ test('returns MP3 bytes with private no-store response headers', async () => {
   assert.equal(response.headers.get('cache-control'), 'private, no-store');
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(response.headers.get('x-tts-model'), enabledConfig.model);
+});
+
+test('accepts multilingual presets without an explicit language restriction', async () => {
+  const response = await createHandler()(request({
+    text: 'Hallo',
+    language: 'German',
+    voiceId: 'global-1',
+  }));
+
+  assert.equal(response.status, 200);
 });
 
 test('maps TTS moderation, rate limit, configuration, and timeout failures safely', async () => {

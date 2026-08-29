@@ -14,6 +14,7 @@ const enabledConfig: TTSConfig = {
 
 const presetVoices: MistralVoice[] = [
   { id: 'de-1', name: 'Anna', languages: ['de'], gender: 'female' },
+  { id: 'global-1', name: 'Multilingual', languages: [] },
   { id: 'en-1', name: 'James', languages: ['en'], description: 'English preset' },
   { id: 'custom-looking-id', name: 'Do not expose for German', languages: ['fr'] },
 ];
@@ -30,7 +31,10 @@ test('returns only preset voices compatible with the requested language', async 
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
-    voices: [{ id: 'de-1', name: 'Anna', languages: ['de'], gender: 'female' }],
+    voices: [
+      { id: 'de-1', name: 'Anna', languages: ['de'], gender: 'female' },
+      { id: 'global-1', name: 'Multilingual', languages: [] },
+    ],
   });
 });
 
