@@ -29,13 +29,13 @@ test('lists preset voices with Mistral bearer authentication', async () => {
       items: [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }],
       total: 1,
       page: 1,
-      page_size: 1000,
+      page_size: 10,
       total_pages: 1,
     });
   }) as typeof fetch);
 
   assert.deepEqual(voices, [{ id: 'voice-1', name: 'Voice One', languages: ['en'] }]);
-  assert.equal(request?.input, 'https://api.mistral.ai/v1/audio/voices?limit=1000&offset=0');
+  assert.equal(request?.input, 'https://api.mistral.ai/v1/audio/voices?limit=10&offset=0&type=preset');
   assert.equal(request?.init?.method, 'GET');
   assert.equal((request?.init?.headers as Headers).get('authorization'), 'Bearer test-secret-key');
 });
