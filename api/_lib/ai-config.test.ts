@@ -14,7 +14,7 @@ test('uses OpenAI defaults when no provider is configured', () => {
   });
 });
 
-test('uses the Mistral endpoint and pinned Large 3 model when selected', () => {
+test('uses the Mistral endpoint and the accessible Large alias when selected', () => {
   const config = resolveAIConfig({
     AI_PROVIDER: 'mistral',
     MISTRAL_API_KEY: 'mistral-key',
@@ -22,7 +22,7 @@ test('uses the Mistral endpoint and pinned Large 3 model when selected', () => {
 
   assert.deepEqual(config, {
     provider: 'mistral',
-    model: 'mistral-large-2512',
+    model: 'mistral-large-latest',
     apiKey: 'mistral-key',
     baseURL: 'https://api.mistral.ai/v1',
   });

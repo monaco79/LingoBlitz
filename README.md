@@ -86,10 +86,10 @@ The AI provider and model are selected through environment variables, without co
 | Variable | Mistral | OpenAI |
 | --- | --- | --- |
 | `AI_PROVIDER` | `mistral` | `openai` |
-| `AI_MODEL` | `mistral-large-2512` | `gpt-4o` |
+| `AI_MODEL` | `mistral-large-latest` | `gpt-4o` |
 | API key | `MISTRAL_API_KEY` | `OPENAI_API_KEY` |
 
-`AI_MODEL` is optional. When it is empty, the application uses the selected provider's default model (`mistral-large-2512` or `gpt-4o`). OpenAI remains the default provider when `AI_PROVIDER` is not set.
+`AI_MODEL` is optional. When it is empty, the application uses the selected provider's default model (`mistral-large-latest` or `gpt-4o`). OpenAI remains the default provider when `AI_PROVIDER` is not set.
 
 For a safe Vercel switch, first add `MISTRAL_API_KEY` to every affected project and the required Production/Preview environments. Then set `AI_PROVIDER=mistral`, leave `AI_MODEL` empty unless you want an explicit override, and redeploy. To return to OpenAI, set `AI_PROVIDER=openai`, ensure `OPENAI_API_KEY` is available, and clear `AI_MODEL` (or set it to an OpenAI model such as `gpt-4o`) before redeploying. Copy `.env.example` for local development.
 

@@ -1,4 +1,4 @@
-import type { TTSConfig } from './tts-config.ts';
+import type { TTSConfig } from './tts-config';
 
 export interface MistralVoice {
   id: string;

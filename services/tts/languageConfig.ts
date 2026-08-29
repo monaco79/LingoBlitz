@@ -1,4 +1,4 @@
-import type { Language } from '../../types.ts';
+import type { Language } from '../../types';
 
 const MISTRAL_LANGUAGE_CODES: Partial<Record<Language, string>> = {
   English: 'en',

@@ -13,7 +13,7 @@ const PROVIDER_DEFAULTS: Record<AIProvider, { model: string; keyName: string; ba
     keyName: 'OPENAI_API_KEY',
   },
   mistral: {
-    model: 'mistral-large-2512',
+    model: 'mistral-large-latest',
     keyName: 'MISTRAL_API_KEY',
     baseURL: 'https://api.mistral.ai/v1',
   },

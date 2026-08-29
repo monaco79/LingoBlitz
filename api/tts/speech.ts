@@ -3,10 +3,10 @@ import {
   getCachedPresetVoices,
   TTSError,
   type MistralVoice,
-} from '../_lib/mistral-tts.ts';
-import { resolveTTSConfig, type TTSConfig } from '../_lib/tts-config.ts';
-import { toMistralLanguageCode } from '../../services/tts/languageConfig.ts';
-import type { Language } from '../../types.ts';
+} from '../_lib/mistral-tts';
+import { resolveTTSConfig, type TTSConfig } from '../_lib/tts-config';
+import { toMistralLanguageCode } from '../../services/tts/languageConfig';
+import type { Language } from '../../types';
 
 export const config = { runtime: 'edge' };
 
