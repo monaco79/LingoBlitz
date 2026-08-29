@@ -1,6 +1,7 @@
 import { LANGUAGE_TO_LOCALE } from '../../constants';
 import type { Language } from '../../types';
 import {
+  SYSTEM_DEFAULT_BROWSER_VOICE,
   TTSAdapterError,
   type AdapterContext,
   type PlaybackUnit,
@@ -22,7 +23,12 @@ interface BrowserSpeechSynthesis {
 export interface BrowserSpeechAdapterOptions {
   speechSynthesis?: BrowserSpeechSynthesis;
   createUtterance?: (text: string) => SpeechSynthesisUtterance;
+  voiceDiscoveryPollMs?: number;
+  voiceDiscoveryTimeoutMs?: number;
 }
+
+const DEFAULT_VOICE_DISCOVERY_POLL_MS = 100;
+const DEFAULT_VOICE_DISCOVERY_TIMEOUT_MS = 1_500;
 
 const sortVoices = (left: SpeechSynthesisVoice, right: SpeechSynthesisVoice): number => {
   const leftName = left.name.toLowerCase();
@@ -46,16 +52,25 @@ const createCancelledError = (): TTSAdapterError =>
 export class BrowserSpeechAdapter implements SpeechAdapter {
   private readonly synthesis: BrowserSpeechSynthesis;
   private readonly createUtterance: (text: string) => SpeechSynthesisUtterance;
+  private readonly voiceDiscoveryPollMs: number;
+  private readonly voiceDiscoveryTimeoutMs: number;
 
   constructor(options: BrowserSpeechAdapterOptions = {}) {
     this.synthesis = options.speechSynthesis ?? window.speechSynthesis;
     this.createUtterance = options.createUtterance ?? ((text) => new SpeechSynthesisUtterance(text));
+    this.voiceDiscoveryPollMs = options.voiceDiscoveryPollMs ?? DEFAULT_VOICE_DISCOVERY_POLL_MS;
+    this.voiceDiscoveryTimeoutMs = options.voiceDiscoveryTimeoutMs ?? DEFAULT_VOICE_DISCOVERY_TIMEOUT_MS;
   }
 
   async getVoices(language: Language): Promise<TTSVoiceOption[]> {
+    if (this.synthesis.getVoices().length === 0) {
+      await this.waitForVoiceDiscovery();
+    }
     const languageCode = LANGUAGE_TO_LOCALE[language].split('-')[0].toLowerCase();
 
-    return this.synthesis.getVoices()
+    return [
+      SYSTEM_DEFAULT_BROWSER_VOICE,
+      ...this.synthesis.getVoices()
       .filter((voice) => voice.lang.toLowerCase().startsWith(languageCode))
       .sort(sortVoices)
       .map((voice) => ({
@@ -64,7 +79,33 @@ export class BrowserSpeechAdapter implements SpeechAdapter {
         displayName: `${voice.name} (${voice.lang})`,
         provider: 'browser',
         languages: [voice.lang.replace('_', '-')],
-      }));
+      } satisfies TTSVoiceOption)),
+    ];
+  }
+
+  private waitForVoiceDiscovery(): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      let pollTimer: number | undefined;
+      let timeoutTimer: number | undefined;
+      const supportsEvents = Boolean(this.synthesis.addEventListener && this.synthesis.removeEventListener);
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (pollTimer !== undefined) window.clearInterval(pollTimer);
+        if (timeoutTimer !== undefined) window.clearTimeout(timeoutTimer);
+        if (supportsEvents) this.synthesis.removeEventListener?.('voiceschanged', check);
+        resolve();
+      };
+      const check: EventListener = () => {
+        if (this.synthesis.getVoices().length > 0) finish();
+      };
+
+      if (supportsEvents) this.synthesis.addEventListener?.('voiceschanged', check);
+      pollTimer = window.setInterval(check, this.voiceDiscoveryPollMs);
+      timeoutTimer = window.setTimeout(finish, this.voiceDiscoveryTimeoutMs);
+      check(new Event('voiceschanged'));
+    });
   }
 
   subscribeToVoiceChanges(listener: () => void): () => void {

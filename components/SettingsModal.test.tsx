@@ -124,4 +124,35 @@ describe('SettingsModal voice settings integration', () => {
     expect(service.stopSpeech).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull();
   });
+
+  it('allows saving Japanese with Browser System default when enumeration stays empty', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    service.getVoicesForLanguage.mockImplementation((_language, provider) => (
+      provider === 'browser'
+        ? Promise.resolve([])
+        : Promise.resolve([voice('spanish-one', 'Spanish One', 'voxtral', ['es'])])
+    ));
+    render(
+      <SettingsModal
+        currentSettings={currentSettings}
+        onSave={onSave}
+        onClose={() => undefined}
+        onFallback={() => undefined}
+      />,
+    );
+
+    await screen.findByRole('option', { name: 'Spanish One' });
+    await user.selectOptions(screen.getByLabelText('I want to learn...'), Language.Japanese);
+    expect(await screen.findByRole('option', { name: 'System default' })).not.toBeNull();
+    const save = screen.getByRole('button', { name: 'Save Changes' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    await user.click(save);
+
+    const saved = onSave.mock.calls[0][0] as UserSettings;
+    expect(getTTSPreference(saved.tts, Language.Japanese)).toMatchObject({
+      provider: 'browser',
+      browserVoiceName: '',
+    });
+  });
 });

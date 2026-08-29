@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { TTS_SAMPLE_SENTENCES } from '../constants';
 import { isVoxtralSupported, toMistralLanguageCode } from '../services/tts/languageConfig';
 import { getTTSPreference } from '../services/tts/settings';
-import type { TTSVoiceOption } from '../services/tts/types';
+import { SYSTEM_DEFAULT_BROWSER_VOICE, type TTSVoiceOption } from '../services/tts/types';
 import * as ttsService from '../services/ttsService';
 import type {
   Language,
@@ -49,6 +49,17 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
   const selectedVoice = activeProvider === 'voxtral'
     ? preference.voxtralVoiceId
     : preference.browserVoiceName;
+  const selectableVoices = activeProvider === 'browser'
+    && selectedVoice
+    && !voices.some((voice) => voice.id === selectedVoice)
+    ? [{
+      ...SYSTEM_DEFAULT_BROWSER_VOICE,
+      id: selectedVoice,
+      name: selectedVoice,
+      displayName: `${selectedVoice} (not currently available)`,
+    }, ...voices]
+    : voices;
+  const canPlaySample = activeProvider === 'browser' || Boolean(selectedVoice);
 
   const commit = (next: TTSSettings) => {
     valueRef.current = next;
@@ -103,7 +114,10 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
       if (!active) return;
       const compatibleVoices = activeProvider === 'voxtral'
         ? loadedVoices.filter((voice) => isCompatibleVoxtralVoice(voice, language))
-        : loadedVoices.filter((voice) => voice.provider === 'browser');
+        : [
+          SYSTEM_DEFAULT_BROWSER_VOICE,
+          ...loadedVoices.filter((voice) => voice.provider === 'browser' && voice.id !== ''),
+        ];
       setVoices(compatibleVoices);
 
       const current = valueRef.current;
@@ -114,7 +128,9 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
       const selectedExists = compatibleVoices.some((voice) => voice.id === currentVoice);
       const nextVoice = selectedExists
         ? currentVoice
-        : compatibleVoices[0]?.id ?? (activeProvider === 'browser' ? currentVoice : '');
+        : activeProvider === 'browser'
+          ? currentVoice
+          : compatibleVoices[0]?.id ?? '';
 
       if (nextVoice !== currentVoice) {
         updatePreference(activeProvider === 'voxtral'
@@ -145,7 +161,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
   };
 
   const playSample = async () => {
-    if (!selectedVoice) return;
+    if (!canPlaySample) return;
     setIsPlayingSample(true);
     try {
       await ttsService.speakText({
@@ -224,14 +240,14 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ language, level, value, o
               onChange={(event) => changeVoice(event.target.value)}
               className="flex-1 min-w-0 max-w-full bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded-lingoblitz py-3 px-4 focus:outline-none focus:ring-2 focus:ring-purple-400 text-gray-900 dark:text-white truncate"
             >
-              {voices.map((voice) => (
+              {selectableVoices.map((voice) => (
                 <option key={voice.id} value={voice.id}>{voice.displayName}</option>
               ))}
             </select>
             <button
               type="button"
               onClick={playSample}
-              disabled={isPlayingSample || !selectedVoice}
+              disabled={isPlayingSample || !canPlaySample}
               aria-label="Play sample"
               title="Play sample"
               className="bg-white hover:bg-gray-50 dark:bg-gray-700 dark:hover:bg-gray-600 border-2 border-[#6263C4] text-gray-800 dark:text-white p-3 rounded-lingoblitz transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"

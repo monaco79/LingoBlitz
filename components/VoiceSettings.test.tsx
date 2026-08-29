@@ -139,6 +139,27 @@ describe('VoiceSettings', () => {
     });
   });
 
+  it.each([Language.Japanese, Language.Chinese])(
+    'uses selectable System default and permits preview when %s has no enumerated voices',
+    async (language) => {
+      const user = userEvent.setup();
+      service.getVoicesForLanguage.mockResolvedValue([]);
+
+      render(<Harness language={language} />);
+
+      const systemDefault = await screen.findByRole('option', { name: 'System default' });
+      expect((systemDefault.parentElement as HTMLSelectElement).value).toBe('');
+      const preview = screen.getByRole('button', { name: 'Play sample' }) as HTMLButtonElement;
+      expect(preview.disabled).toBe(false);
+      await user.click(preview);
+      expect(service.speakText).toHaveBeenCalledTimes(1);
+      expect(getTTSPreference(service.speakText.mock.calls[0][0].settings, language)).toMatchObject({
+        provider: 'browser',
+        browserVoiceName: '',
+      });
+    },
+  );
+
   it('restores the saved voice for each source when switching providers', async () => {
     const user = userEvent.setup();
     const initialValue: TTSSettings = {
@@ -193,7 +214,9 @@ describe('VoiceSettings', () => {
 
     render(<Harness initialValue={initialValue} onValue={onValue} />);
 
-    expect(await screen.findByText('No voices found for this language.')).not.toBeNull();
+    expect(await screen.findByRole('option', { name: 'System default' })).not.toBeNull();
+    expect(screen.getByRole('option', { name: 'Monica (not currently available)' })).not.toBeNull();
+    expect((screen.getByRole('combobox', { name: 'Voice' }) as HTMLSelectElement).value).toBe('Monica');
     expect(onValue).not.toHaveBeenCalled();
 
     discoveredVoices = [

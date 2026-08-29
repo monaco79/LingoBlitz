@@ -47,7 +47,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, onFallback }) => {
     const preference = getTTSPreference(settings.tts, settings.learningLanguage);
     return preference.provider === 'voxtral'
       ? isVoxtralSupported(settings.learningLanguage) && Boolean(preference.voxtralVoiceId)
-      : Boolean(preference.browserVoiceName);
+      : true;
   };
 
   const canProceed = () => {

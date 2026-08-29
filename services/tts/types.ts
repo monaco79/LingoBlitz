@@ -35,6 +35,14 @@ export interface TTSVoiceOption {
   languages: string[];
 }
 
+export const SYSTEM_DEFAULT_BROWSER_VOICE: Readonly<TTSVoiceOption> = {
+  id: '',
+  name: '',
+  displayName: 'System default',
+  provider: 'browser',
+  languages: [],
+};
+
 export type TTSAdapterErrorCategory =
   | 'cancelled'
   | 'configuration'

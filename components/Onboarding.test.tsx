@@ -84,4 +84,30 @@ describe('Onboarding voice settings integration', () => {
       voxtralVoiceId: 'german-one',
     });
   });
+
+  it.each([Language.Japanese, Language.Chinese])(
+    'allows %s onboarding with Browser System default when enumeration stays empty',
+    async (language) => {
+      const user = userEvent.setup();
+      const onComplete = vi.fn();
+      render(<Onboarding onComplete={onComplete} onFallback={() => undefined} />);
+
+      await user.selectOptions(screen.getByLabelText('I want to learn...'), language);
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+      await user.click(screen.getByRole('button', { name: Topic.Travel }));
+      await user.click(screen.getByRole('button', { name: 'Next' }));
+
+      expect(await screen.findByRole('option', { name: 'System default' })).not.toBeNull();
+      const start = screen.getByRole('button', { name: 'Start Learning!' }) as HTMLButtonElement;
+      expect(start.disabled).toBe(false);
+      await user.click(start);
+
+      const completed = onComplete.mock.calls[0][0] as UserSettings;
+      expect(getTTSPreference(completed.tts, language)).toMatchObject({
+        provider: 'browser',
+        browserVoiceName: '',
+      });
+    },
+  );
 });

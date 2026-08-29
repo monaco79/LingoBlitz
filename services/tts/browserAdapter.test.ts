@@ -62,6 +62,81 @@ const createHarness = (voices: SpeechSynthesisVoice[] = [makeVoice('Microsoft Ka
 };
 
 describe('BrowserSpeechAdapter', () => {
+  it('waits for adapter-owned voiceschanged discovery and includes System default', async () => {
+    let voices: SpeechSynthesisVoice[] = [];
+    const eventHandlers = new Set<EventListenerOrEventListenerObject>();
+    const synthesis = {
+      cancel: vi.fn(),
+      getVoices: vi.fn(() => voices),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      speak: vi.fn(),
+      addEventListener: vi.fn((_type: string, listener: EventListenerOrEventListenerObject) => {
+        eventHandlers.add(listener);
+      }),
+      removeEventListener: vi.fn((_type: string, listener: EventListenerOrEventListenerObject) => {
+        eventHandlers.delete(listener);
+      }),
+    };
+    const options = {
+      speechSynthesis: synthesis,
+      voiceDiscoveryPollMs: 10,
+      voiceDiscoveryTimeoutMs: 100,
+    };
+    const adapter = new BrowserSpeechAdapter(options);
+    let settled = false;
+
+    const discovery = adapter.getVoices(Language.Japanese);
+    void discovery.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    voices = [makeVoice('Kyoko', 'ja-JP', true)];
+    eventHandlers.forEach((handler) => {
+      if (typeof handler === 'function') handler(new Event('voiceschanged'));
+      else handler.handleEvent(new Event('voiceschanged'));
+    });
+
+    await expect(discovery).resolves.toEqual([
+      { id: '', name: '', displayName: 'System default', provider: 'browser', languages: [] },
+      { id: 'Kyoko', name: 'Kyoko', displayName: 'Kyoko (ja-JP)', provider: 'browser', languages: ['ja-JP'] },
+    ]);
+    expect(eventHandlers).toHaveLength(0);
+  });
+
+  it('bounds empty mobile voice discovery and returns System default after timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const synthesis = {
+        cancel: vi.fn(),
+        getVoices: vi.fn(() => [] as SpeechSynthesisVoice[]),
+        pause: vi.fn(),
+        resume: vi.fn(),
+        speak: vi.fn(),
+      };
+      const options = {
+        speechSynthesis: synthesis,
+        voiceDiscoveryPollMs: 10,
+        voiceDiscoveryTimeoutMs: 30,
+      };
+      const adapter = new BrowserSpeechAdapter(options);
+      const discovery = adapter.getVoices(Language.Chinese);
+
+      await vi.advanceTimersByTimeAsync(29);
+      let settled = false;
+      void discovery.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(discovery).resolves.toEqual([
+        { id: '', name: '', displayName: 'System default', provider: 'browser', languages: [] },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('owns a non-destructive voiceschanged subscription for multiple UI consumers', () => {
     const eventHandlers = new Set<EventListenerOrEventListenerObject>();
     const synthesis = {
@@ -189,6 +264,7 @@ describe('BrowserSpeechAdapter', () => {
     const { adapter } = createHarness(voices);
 
     await expect(adapter.getVoices(Language.German)).resolves.toEqual([
+      { id: '', name: '', displayName: 'System default', provider: 'browser', languages: [] },
       { id: 'Microsoft Katja', name: 'Microsoft Katja', displayName: 'Microsoft Katja (de-DE)', provider: 'browser', languages: ['de-DE'] },
       { id: 'Google Deutsch', name: 'Google Deutsch', displayName: 'Google Deutsch (de-DE)', provider: 'browser', languages: ['de-DE'] },
       { id: 'Cloud Natural', name: 'Cloud Natural', displayName: 'Cloud Natural (de-AT)', provider: 'browser', languages: ['de-AT'] },
@@ -208,6 +284,7 @@ describe('BrowserSpeechAdapter', () => {
     const names = (await adapter.getVoices(Language.German)).map(({ name }) => name);
 
     expect(names).toEqual([
+      '',
       'Microsoft Zulu Natural',
       'Microsoft Alpha',
       'Google Zulu Natural',

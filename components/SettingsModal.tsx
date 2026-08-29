@@ -42,7 +42,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ currentSettings, onSave, 
   const preference = getTTSPreference(settings.tts, settings.learningLanguage);
   const hasCompatibleVoice = preference.provider === 'voxtral'
     ? isVoxtralSupported(settings.learningLanguage) && Boolean(preference.voxtralVoiceId)
-    : Boolean(preference.browserVoiceName);
+    : true;
   const canSave = settings.nativeLanguage !== settings.learningLanguage
     && settings.interests.length > 0
     && hasCompatibleVoice;
